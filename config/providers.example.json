@@ -1,0 +1,40 @@
+{
+  "$schemaVersion": 1,
+  "designOnly": true,
+  "activeModelId": null,
+  "presets": [
+    {
+      "id": "openai-compatible",
+      "name": "OpenAI 兼容服务",
+      "providerKind": "custom",
+      "protocol": "openai-chat",
+      "baseUrl": "https://api.openai.com/v1",
+      "authMode": "bearer",
+      "options": { "timeoutMs": 60000 },
+      "enabled": false,
+      "modelDefaults": { "modelName": "", "capabilities": { "textInput": "unknown", "imageInput": "unknown", "streaming": "unknown", "tools": "unknown", "structuredOutput": "unknown" } }
+    },
+    {
+      "id": "deepseek-official",
+      "name": "DeepSeek 官方",
+      "providerKind": "deepseek",
+      "protocol": "openai-chat",
+      "baseUrl": "https://api.deepseek.com",
+      "authMode": "bearer",
+      "options": { "timeoutMs": 60000 },
+      "enabled": false,
+      "modelDefaults": { "modelName": "", "capabilities": { "textInput": "unknown", "imageInput": "unknown", "streaming": "unknown", "tools": "unknown", "structuredOutput": "unknown" } }
+    },
+    {
+      "id": "ollama-local",
+      "name": "Ollama 本地",
+      "providerKind": "ollama",
+      "protocol": "ollama-chat",
+      "baseUrl": "http://127.0.0.1:11434",
+      "authMode": "none",
+      "options": { "timeoutMs": 120000 },
+      "enabled": false,
+      "modelDefaults": { "modelName": "", "capabilities": { "textInput": "unknown", "imageInput": "unknown", "streaming": "unknown", "tools": "unknown", "structuredOutput": "unknown" } }
+    }
+  ]
+}

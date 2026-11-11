@@ -1,0 +1,9 @@
+{
+  "$comment": "Example only. The application does not load this file automatically. Never add an API key or private document path here.",
+  "provider": {
+    "$comment": "provider selects the adapter, baseUrl is a public placeholder endpoint, and model is the model ID supplied by the user.",
+    "provider": "openai-compatible",
+    "baseUrl": "https://api.example.invalid/v1",
+    "model": "replace-with-model"
+  }
+}

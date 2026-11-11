@@ -1,0 +1,30 @@
+{
+  "name": "decklens",
+  "private": true,
+  "version": "0.1.0",
+  "type": "module",
+  "engines": {
+    "node": ">=22.13.0",
+    "npm": ">=10"
+  },
+  "workspaces": [
+    "apps/*",
+    "packages/*"
+  ],
+  "scripts": {
+    "dev": "concurrently --kill-others-on-fail -n server,web -c cyan,magenta \"npm:dev:server\" \"npm:dev:web\"",
+    "dev:all": "npm run dev",
+    "dev:server": "npm run dev --workspace @decklens/server",
+    "dev:web": "npm run dev --workspace @decklens/web",
+    "build": "npm run build --workspace @decklens/core && npm run build --workspace @decklens/server && npm run build --workspace @decklens/web",
+    "typecheck": "npm run typecheck --workspaces --if-present",
+    "start": "npm run start --workspace @decklens/server",
+    "test": "npm run test --workspaces --if-present && npm run test:integration",
+    "test:integration": "node --conditions=development --import tsx --test tests/*.test.ts",
+    "check:architecture": "node node_modules/typescript/bin/tsc --project tests/architecture/tsconfig.json && node --test tests/architecture/schema.test.mjs"
+  },
+  "devDependencies": {
+    "concurrently": "^9.2.1",
+    "typescript": "^5.9.3"
+  }
+}

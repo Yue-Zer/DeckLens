@@ -136,6 +136,70 @@ export interface DocumentTree {
   metadata?: Record<string, unknown>;
 }
 
+/** A locally persisted, source-grounded learning article generated from a document version. */
+export interface LearningArticle {
+  id: string;
+  documentId: string;
+  documentVersionId: string;
+  title: string;
+  language: string;
+  status: "generating" | "ready" | "failed" | "stale";
+  progress: number;
+  progressMessage?: string;
+  errorMessage?: string;
+  provider?: string;
+  model?: string;
+  createdAt: string;
+  updatedAt: string;
+  sections: LearningArticleSection[];
+}
+
+export interface LearningArticleSection {
+  id: string;
+  sourceSectionId?: string;
+  parentId?: string;
+  title: string;
+  depth: number;
+  order: number;
+  kind: "overview" | "body" | "conclusion";
+  paragraphs: LearningArticleParagraph[];
+  figures: LearningArticleFigure[];
+  children: LearningArticleSection[];
+}
+
+export interface LearningArticleParagraph {
+  id: string;
+  kind: "overview" | "body" | "conclusion";
+  order: number;
+  text: string;
+  sources: Array<{
+    blockId: string;
+    quote: string;
+    sourceOrder: number;
+    locator: SourceLocator;
+  }>;
+}
+
+export interface LearningArticleFigure {
+  id: string;
+  assetId: string;
+  blockId: string;
+  mimeType: string;
+  caption: string;
+  sourceOrder: number;
+  locator: SourceLocator;
+  afterParagraphId?: string;
+}
+
+export interface LearningArticleJob {
+  jobId: string;
+  status: "queued" | "generating" | "completed" | "failed";
+  progress: number;
+  message: string;
+  article?: LearningArticle;
+  error?: string;
+}
+
 export interface ExploreNode {
   id: string;
   documentId: string;

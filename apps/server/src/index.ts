@@ -289,6 +289,16 @@ export function createServer(options: ServerOptions = {}) {
     res.json(job);
   });
 
+  app.get("/api/folders", (_req, res) => res.json(core.folders.list()));
+  app.post("/api/folders", asyncRoute((req, res) => {
+    const body = z.object({ name: z.string().trim().min(1).max(100), parentId: z.string().uuid().nullable().optional() }).strict().parse(req.body);
+    res.status(201).json(core.folders.create(body.name, body.parentId ?? null));
+  }));
+  app.put("/api/documents/:id/folder", asyncRoute((req, res) => {
+    const body = z.object({ folderId: z.string().uuid().nullable() }).strict().parse(req.body);
+    core.folders.moveDocument(req.params.id, body.folderId);
+    res.status(204).end();
+  }));
   app.get("/api/documents", (_req, res) => res.json(core.documents.list()));
   app.get("/api/documents/:id", asyncRoute(async (req, res) => res.json(await core.documents.get(req.params.id))));
   app.delete("/api/documents/:id", asyncRoute(async (req, res) => { await enqueueImport(async () => { await core.documents.delete(req.params.id); }); res.status(204).end(); }));
@@ -310,6 +320,21 @@ export function createServer(options: ServerOptions = {}) {
     });
   }));
   app.get("/api/documents/:id/tree", asyncRoute(async (req, res) => res.json(await core.documents.tree(req.params.id))));
+  app.get("/api/documents/:id/learning-article", asyncRoute(async (req, res) => {
+    core.documents.get(z.string().min(1).max(128).parse(req.params.id));
+    res.json(core.learningArticles.get(req.params.id));
+  }));
+  app.post("/api/documents/:id/learning-article/generate", asyncRoute(async (req, res) => {
+    const documentId = z.string().min(1).max(128).parse(req.params.id);
+    core.documents.get(documentId);
+    const body = z.object({ force: z.boolean().optional(), language: z.string().min(1).max(32).optional() }).strict().parse(req.body ?? {});
+    if (core.learningArticles.get(documentId)?.status === "generating") {
+      res.status(409).json({ error: { code: "ARTICLE_GENERATION_IN_PROGRESS", message: "这份文档的学习文章正在生成。" } });
+      return;
+    }
+    void core.learningArticles.generate(documentId, body).catch(() => { console.error("学习文章任务启动失败。"); });
+    res.status(202).json(core.learningArticles.get(documentId));
+  }));
   app.patch("/api/documents/:id/sections", asyncRoute(async (req, res) => {
     const edit = z.object({
       operation: z.enum(["rename", "move", "reorder", "split", "merge"]),

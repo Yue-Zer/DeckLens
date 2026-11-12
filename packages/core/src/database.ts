@@ -355,7 +355,86 @@ const migrations = [
     FOREIGN KEY(version_id,block_id) REFERENCES blocks(version_id,block_id) ON DELETE CASCADE,
     UNIQUE(annotation_id,target_order)
   );
-  CREATE INDEX IF NOT EXISTS annotation_targets_block_idx ON annotation_targets(version_id,block_id,annotation_id);`
+  CREATE INDEX IF NOT EXISTS annotation_targets_block_idx ON annotation_targets(version_id,block_id,annotation_id);`,
+  `CREATE TABLE IF NOT EXISTS learning_articles (
+    article_id TEXT PRIMARY KEY,
+    document_id TEXT NOT NULL REFERENCES documents(document_id) ON DELETE CASCADE,
+    version_id TEXT NOT NULL REFERENCES document_versions(version_id) ON DELETE CASCADE,
+    source_structure_hash TEXT NOT NULL,
+    title TEXT NOT NULL,
+    language TEXT NOT NULL DEFAULT 'und',
+    status TEXT NOT NULL CHECK(status IN ('generating','ready','failed')),
+    progress INTEGER NOT NULL DEFAULT 0 CHECK(progress BETWEEN 0 AND 100),
+    progress_message TEXT NOT NULL DEFAULT '',
+    error_message TEXT,
+    provider TEXT,
+    model TEXT,
+    created_at TEXT NOT NULL,
+    updated_at TEXT NOT NULL,
+    UNIQUE(document_id,version_id)
+  );
+  CREATE INDEX learning_articles_doc_idx ON learning_articles(document_id,updated_at DESC);
+  CREATE TABLE IF NOT EXISTS learning_article_sections (
+    article_section_id TEXT PRIMARY KEY,
+    article_id TEXT NOT NULL REFERENCES learning_articles(article_id) ON DELETE CASCADE,
+    version_id TEXT NOT NULL REFERENCES document_versions(version_id) ON DELETE CASCADE,
+    source_section_id TEXT,
+    parent_article_section_id TEXT,
+    title TEXT NOT NULL,
+    section_kind TEXT NOT NULL CHECK(section_kind IN ('overview','body','conclusion')),
+    depth INTEGER NOT NULL DEFAULT 0,
+    order_index INTEGER NOT NULL,
+    UNIQUE(article_id,source_section_id),
+    UNIQUE(article_id,article_section_id),
+    FOREIGN KEY(article_id,parent_article_section_id) REFERENCES learning_article_sections(article_id,article_section_id) ON DELETE CASCADE
+  );
+  CREATE INDEX learning_article_sections_tree_idx ON learning_article_sections(article_id,parent_article_section_id,order_index);
+  CREATE TABLE IF NOT EXISTS learning_article_paragraphs (
+    paragraph_id TEXT PRIMARY KEY,
+    article_section_id TEXT NOT NULL REFERENCES learning_article_sections(article_section_id) ON DELETE CASCADE,
+    paragraph_kind TEXT NOT NULL CHECK(paragraph_kind IN ('overview','body','conclusion')),
+    order_index INTEGER NOT NULL,
+    paragraph_text TEXT NOT NULL,
+    UNIQUE(article_section_id,order_index)
+  );
+  CREATE INDEX learning_article_paragraphs_order_idx ON learning_article_paragraphs(article_section_id,order_index);
+  CREATE TABLE IF NOT EXISTS learning_article_sources (
+    source_id TEXT PRIMARY KEY,
+    paragraph_id TEXT NOT NULL REFERENCES learning_article_paragraphs(paragraph_id) ON DELETE CASCADE,
+    version_id TEXT NOT NULL,
+    block_id TEXT NOT NULL,
+    source_order INTEGER NOT NULL,
+    quote TEXT NOT NULL,
+    locator_json TEXT NOT NULL,
+    UNIQUE(paragraph_id,block_id),
+    FOREIGN KEY(version_id,block_id) REFERENCES blocks(version_id,block_id) ON DELETE CASCADE
+  );
+  CREATE INDEX learning_article_sources_block_idx ON learning_article_sources(version_id,block_id);
+  CREATE TABLE IF NOT EXISTS learning_article_figures (
+    figure_id TEXT PRIMARY KEY,
+    article_section_id TEXT NOT NULL REFERENCES learning_article_sections(article_section_id) ON DELETE CASCADE,
+    version_id TEXT NOT NULL,
+    block_id TEXT NOT NULL,
+    asset_id TEXT NOT NULL REFERENCES assets(asset_id) ON DELETE CASCADE,
+    after_paragraph_id TEXT REFERENCES learning_article_paragraphs(paragraph_id) ON DELETE SET NULL,
+    source_order INTEGER NOT NULL,
+    caption TEXT NOT NULL DEFAULT '',
+    UNIQUE(article_section_id,block_id),
+    FOREIGN KEY(version_id,block_id) REFERENCES blocks(version_id,block_id) ON DELETE CASCADE
+  );
+  CREATE INDEX learning_article_figures_order_idx ON learning_article_figures(article_section_id,source_order);`,
+  `CREATE TABLE file_folders (
+    folder_id TEXT PRIMARY KEY,
+    parent_id TEXT REFERENCES file_folders(folder_id) ON DELETE RESTRICT,
+    name TEXT NOT NULL,
+    created_at TEXT NOT NULL
+  );
+  CREATE UNIQUE INDEX file_folders_sibling_name_idx ON file_folders(COALESCE(parent_id,''), name COLLATE NOCASE);
+  CREATE TABLE file_folder_memberships (
+    document_id TEXT PRIMARY KEY REFERENCES documents(document_id) ON DELETE CASCADE,
+    folder_id TEXT NOT NULL REFERENCES file_folders(folder_id) ON DELETE RESTRICT
+  );
+  CREATE INDEX file_folder_memberships_folder_idx ON file_folder_memberships(folder_id);`
 ];
 
 export function openDatabase(dataDir: string): SqliteDatabase {

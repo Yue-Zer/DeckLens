@@ -30,9 +30,10 @@ test("fresh SQLite migrates, persists, and reopens without source directory data
     core = createCore(dir);
     assert.equal(core.documents.get(result.document.id).title, "机器学习");
     const db = new Database(join(dir, "db", "decklens.sqlite"), { readonly: true });
-    assert.equal(db.prepare("SELECT COUNT(*) AS n FROM schema_migrations").get().n, 4);
-    assert.deepEqual(db.pragma("foreign_key_check"), []);
-    db.close();
+    try {
+      assert.equal(db.prepare("SELECT COUNT(*) AS n FROM schema_migrations").get().n, 6);
+      assert.deepEqual(db.pragma("foreign_key_check"), []);
+    } finally { db.close(); }
   } finally { await core.storage.close(); await rm(dir, { recursive: true, force: true }); }
 });
 
@@ -62,9 +63,23 @@ test("v1 databases migrate without losing structure, exploration, sources or ind
     const node = core.exploration.createNode({ documentId: imported.document.id, title: "原文引用", anchor: { blockId: section.blocks[1].id } });
     const before = core.documents.blocks(imported.document.id).map(block => [block.text, block.sourceLocator.lineStart]);
     await core.storage.close();
+    core = undefined;
     const old = new Database(join(dir, "db", "decklens.sqlite"));
-    old.exec("DROP INDEX blocks_source_order_idx; ALTER TABLE blocks DROP COLUMN source_order; ALTER TABLE explore_state DROP COLUMN floating_state_json; DELETE FROM schema_migrations WHERE version>=2");
-    old.close();
+    try {
+      old.exec(`
+        DROP TABLE file_folder_memberships;
+        DROP TABLE file_folders;
+        DROP TABLE learning_article_figures;
+        DROP TABLE learning_article_sources;
+        DROP TABLE learning_article_paragraphs;
+        DROP TABLE learning_article_sections;
+        DROP TABLE learning_articles;
+        DROP INDEX blocks_source_order_idx;
+        ALTER TABLE blocks DROP COLUMN source_order;
+        ALTER TABLE explore_state DROP COLUMN floating_state_json;
+        DELETE FROM schema_migrations WHERE version>=2;
+      `);
+    } finally { old.close(); }
     core = createCore(dir);
     const blocks = core.documents.blocks(imported.document.id);
     assert.deepEqual(blocks.map(block => [block.text, block.sourceLocator.lineStart]), before);
@@ -72,25 +87,26 @@ test("v1 databases migrate without losing structure, exploration, sources or ind
     assert.ok(flat(core.documents.tree(imported.document.id).sections).some(item => item.title === "手动标题"));
     assert.equal(core.exploration.getNode(node.id).sources[0].blockId, section.blocks[1].id);
     const db = new Database(join(dir, "db", "decklens.sqlite"), { readonly: true });
-    assert.ok(db.prepare("SELECT COUNT(*) AS n FROM chunks_fts WHERE chunks_fts MATCH 'Ranking'").get().n > 0);
-    assert.deepEqual(db.pragma("foreign_key_check"), []);
-    db.close();
-  } finally { await core.storage.close(); await rm(dir, { recursive: true, force: true }); }
+    try {
+      assert.ok(db.prepare("SELECT COUNT(*) AS n FROM chunks_fts WHERE chunks_fts MATCH 'Ranking'").get().n > 0);
+      assert.deepEqual(db.pragma("foreign_key_check"), []);
+    } finally { db.close(); }
+  } finally { if (core) await core.storage.close(); await rm(dir, { recursive: true, force: true }); }
 });
 
 test("unknown or altered migration history refuses startup without modifying documents", async () => {
-  for (const mutation of ["UPDATE schema_migrations SET checksum='tampered' WHERE version=1", "INSERT INTO schema_migrations VALUES(5,'future','2026-01-01')"]) {
+  for (const mutation of ["UPDATE schema_migrations SET checksum='tampered' WHERE version=1", "INSERT INTO schema_migrations SELECT MAX(version)+1,'future','2026-01-01' FROM schema_migrations"]) {
     const dir = await mkdtemp(join(tmpdir(), "decklens-bad-migration-"));
     let core = createCore(dir);
     try {
       const imported = await core.documents.importFile(Buffer.from("# Safe\n\nPreserved."), { originalName: "safe.md" });
       await core.storage.close();
       const db = new Database(join(dir, "db", "decklens.sqlite"));
-      db.exec(mutation); db.close();
+      try { db.exec(mutation); } finally { db.close(); }
       assert.throws(() => createCore(dir), /MIGRATION_CHECKSUM_MISMATCH|SCHEMA_VERSION_UNSUPPORTED/);
       const verify = new Database(join(dir, "db", "decklens.sqlite"), { readonly: true });
-      assert.equal(verify.prepare("SELECT document_id FROM documents").get().document_id, imported.document.id);
-      verify.close();
+      try { assert.equal(verify.prepare("SELECT document_id FROM documents").get().document_id, imported.document.id); }
+      finally { verify.close(); }
     } finally { await rm(dir, { recursive: true, force: true }); }
   }
 });

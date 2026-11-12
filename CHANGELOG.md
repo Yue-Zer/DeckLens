@@ -2,8 +2,16 @@
 
 ## Unreleased
 
+- Added persisted folders and nested folders, with document moves that survive reparsing and restarts.
+- Replaced the file-folder native prompt with an in-page form that works in embedded browsers. The move menu can create a folder and move the file into it, with validation, visible errors, and retry after a failed move.
+- Added ordinary and branching conversation views, chat history, selectable conversation paths, contextual follow-ups, and source links in the right panel.
+- Added locally saved Chinese learning articles with progress, thematic grouping for PDF/PPTX pages, translated headings, original image references, and citation validation. Generation is user initiated and sends extracted text to the configured model; it is separate from local native parsing.
+- Added adjustable reading text size, a neutral reader palette, and a composer menu for import and annotation tools.
+- Updated migration regression tests for the article and folder schema, with safe database cleanup on failed assertions.
 - Moved the document question composer to the bottom of the right exploration panel, including its narrow-screen drawer. Removed the disabled placeholder from the reading area.
 - Connected document questions to the existing exploration API with loading feedback, model setup, source citations, and retryable errors that preserve the question.
+
+Learning articles remain AI generated and require checking against their citations. Interrupted generation does not resume automatically. The existing README screenshots show the earlier base layout rather than the new conversation interface. This update does not package Electron.
 
 ## v0.2.0 - 2026-11-12
 

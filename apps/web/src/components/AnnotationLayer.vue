@@ -365,6 +365,12 @@ watch(() => props.blocks.map(block => `${block.id}:${block.sectionId}`).join('|'
   syncLayout()
 })
 watch(() => props.highlightAnnotationId, scheduleLayout)
+watch(() => props.tool, () => {
+  activePointerId = null
+  erasing = false
+  lassoPoints.value = []
+  strokeSegments.value = []
+})
 
 onMounted(async () => {
   article = articleElement()
@@ -408,7 +414,7 @@ defineExpose({ clear, reload: loadAnnotations })
         class="annotation-mark"
         :class="[`mark-${item.tool}`, { 'is-highlighted': item.annotationId === highlightAnnotationId }]"
         :stroke-width="Math.max(2, item.target.strokeRatio * (targetRect(item.target.blockId)?.width ?? 1))"
-        :fill="item.target.shape === 'polygon' ? 'var(--pink-soft)' : 'none'"
+        :fill="item.target.shape === 'polygon' ? 'var(--accent-soft)' : 'none'"
         :data-annotation-id="item.annotationId"
       />
       <path

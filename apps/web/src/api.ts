@@ -158,6 +158,9 @@ function normalizeExploreNode(value: Record<string, unknown>): ExploreNode {
 }
 
 export const api: PlatformAdapter = {
+  listFolders: () => request<import('./platform').FileLibrary>('/api/folders'),
+  createFolder: (name, parentId) => request<import('./platform').FileFolder>('/api/folders', { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ name, parentId }) }),
+  moveDocument: (documentId, folderId) => request<void>(`/api/documents/${encodeURIComponent(documentId)}/folder`, { method: 'PUT', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ folderId }) }),
   listDocuments: async () => (await request<Array<Record<string, unknown>>>('/api/documents')).map(normalizeDocument),
   startImport: async (files: File[]) => {
     const form = new FormData()
@@ -176,6 +179,10 @@ export const api: PlatformAdapter = {
     const data = await request<{ document?: Record<string, unknown>; versionId?: string; sections?: Section[]; tree?: Section[]; sectionEditsNeedReview?: number; metadata?: Record<string, unknown> }>(`/api/documents/${encodeURIComponent(id)}/tree`)
     return { ...data, document: data.document ? normalizeDocument(data.document) : undefined }
   },
+  getLearningArticle: (id: string) => request<import('@decklens/contracts').LearningArticle | null>(`/api/documents/${encodeURIComponent(id)}/learning-article`),
+  generateLearningArticle: (id: string, options: { force?: boolean; language?: string } = {}) => request<import('@decklens/contracts').LearningArticle | null>(`/api/documents/${encodeURIComponent(id)}/learning-article/generate`, {
+    method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify(options),
+  }),
   getBlocks: async (id: string): Promise<ContentBlock[]> => {
     const result: ContentBlock[] = []
     const seenIds = new Set<string>()

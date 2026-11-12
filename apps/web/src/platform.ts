@@ -1,3 +1,5 @@
+import type { LearningArticle } from '@decklens/contracts'
+
 export type SourceLocator = {
   format?: string
   sourceHash?: string
@@ -51,6 +53,9 @@ export type DocumentSummary = {
   sectionCount?: number
   createdAt?: string
 }
+
+export type FileFolder = { id: string; parentId: string | null; name: string }
+export type FileLibrary = { folders: FileFolder[]; memberships: Array<{ documentId: string; folderId: string }> }
 
 export type Section = {
   id: string
@@ -171,6 +176,7 @@ export type ModelChatRequest = {
 }
 
 export type ReaderViewState = {
+  conversationMode?: 'chat' | 'branch'
   documentId?: string
   chatId?: string
   activeNodeId?: string
@@ -225,6 +231,9 @@ export type AskResult = {
 
 /** Renderer-facing capabilities. Implementations own transport and resource URLs. */
 export interface PlatformAdapter {
+  listFolders(): Promise<FileLibrary>
+  createFolder(name: string, parentId: string | null): Promise<FileFolder>
+  moveDocument(documentId: string, folderId: string | null): Promise<void>
   listDocuments(): Promise<DocumentSummary[]>
   startImport(files: File[]): Promise<{ jobId?: string; jobIds?: string[] }>
   getImport(jobId: string): Promise<ImportJob>
@@ -233,6 +242,8 @@ export interface PlatformAdapter {
   deleteDocument(id: string): Promise<void>
   reparseDocument(id: string): Promise<{ jobId: string }>
   getTree(id: string): Promise<DocumentTree>
+  getLearningArticle(id: string): Promise<LearningArticle | null>
+  generateLearningArticle(id: string, options?: { force?: boolean; language?: string }): Promise<LearningArticle | null>
   getBlocks(id: string): Promise<ContentBlock[]>
   getBlock(id: string): Promise<ContentBlock>
   getAssetUrl(assetId: string): string

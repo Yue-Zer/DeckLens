@@ -4,6 +4,7 @@ import { chmodSync as fsChmodSync, existsSync, mkdirSync as mkdirPathSync, readF
 import { dirname, extname, isAbsolute, join, relative, resolve, sep } from "node:path";
 import { randomUUID, createHash } from "node:crypto";
 import { openDatabase } from "./database.js";
+import { createLearningArticleService } from "./learning-articles.js";
 import { completeWithProvider, streamWithProvider, testProvider } from "./providers.js";
 import { detectFormat, parseDocument, sha256, type ParsedBlock, type ParsedDocument, type ParsedSection, type ProgressCallback } from "./parsers.js";
 import type {
@@ -63,6 +64,29 @@ export function createCore(dataDir: string, options: CreateCoreOptions = {}) {
   const parserVersion = options.parserVersion ?? "0.2.0";
   prepare(db, "INSERT OR IGNORE INTO settings(setting_key,value_json,updated_at) VALUES(?,?,?)")
     .run("provider", JSON.stringify({ provider: "openai-compatible", baseUrl: "https://api.openai.com/v1", model: "" }), now());
+
+  const folders = {
+    list() {
+      const folders = prepare(db, "SELECT folder_id AS id,parent_id AS parentId,name FROM file_folders ORDER BY name COLLATE NOCASE").all();
+      const memberships = prepare(db, "SELECT document_id AS documentId,folder_id AS folderId FROM file_folder_memberships").all();
+      return { folders, memberships };
+    },
+    create(name: string, parentId: string | null = null) {
+      const cleanName = name.trim();
+      if (!cleanName || cleanName.length > 100 || /[\\/\x00-\x1f]/.test(cleanName)) throw coreError("INVALID_FOLDER_NAME", "文件夹名称不能为空，且不能包含斜线或控制字符。");
+      if (parentId && !prepare(db, "SELECT folder_id FROM file_folders WHERE folder_id=?").get(parentId)) throw coreError("FOLDER_NOT_FOUND", "找不到目标文件夹。");
+      if (prepare(db, "SELECT folder_id FROM file_folders WHERE parent_id IS ? AND name=? COLLATE NOCASE").get(parentId, cleanName)) throw coreError("INVALID_FOLDER_NAME", "同一位置已有同名文件夹。");
+      const id = randomUUID();
+      prepare(db, "INSERT INTO file_folders(folder_id,parent_id,name,created_at) VALUES(?,?,?,?)").run(id, parentId, cleanName, now());
+      return { id, parentId, name: cleanName };
+    },
+    moveDocument(documentId: string, folderId: string | null) {
+      getDocument(db, documentId);
+      if (folderId && !prepare(db, "SELECT folder_id FROM file_folders WHERE folder_id=?").get(folderId)) throw coreError("FOLDER_NOT_FOUND", "找不到目标文件夹。");
+      if (folderId) prepare(db, "INSERT INTO file_folder_memberships(document_id,folder_id) VALUES(?,?) ON CONFLICT(document_id) DO UPDATE SET folder_id=excluded.folder_id").run(documentId, folderId);
+      else prepare(db, "DELETE FROM file_folder_memberships WHERE document_id=?").run(documentId);
+    },
+  };
 
   const documents = {
     async importFile(input: string | Buffer | Uint8Array, opts: { originalName?: string; forceReparse?: boolean } = {}): Promise<ImportResult> {
@@ -658,7 +682,23 @@ export function createCore(dataDir: string, options: CreateCoreOptions = {}) {
       model: savedProvider.model ?? "", timeoutMs: 120000, supportsStreaming: true, supportsVision: false, activate: true });
   }
 
-  return { dataDir: root, documents, annotations, terms, chat, exploration, sections, settings, providers, storage };
+  const learningArticles = createLearningArticleService({
+    db,
+    getDocument: documentId => documents.get(documentId),
+    getTree: documentId => documents.tree(documentId),
+    getBlocks: documentId => {
+      const all: BlockRecord[] = [];
+      for (let offset = 0; ; offset += 500) {
+        const page = documents.blocks(documentId, { limit: 500, offset });
+        all.push(...page);
+        if (page.length < 500) return all;
+      }
+    },
+    getActiveProvider: () => providers.getActive() ?? null,
+    complete: request => providers.complete(request),
+  });
+
+  return { dataDir: root, documents, folders, annotations, terms, chat, exploration, sections, settings, providers, learningArticles, storage };
 }
 
 const statementCache = new WeakMap<SqliteDatabase, Map<string, SqliteStatement>>();

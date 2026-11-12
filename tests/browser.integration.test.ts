@@ -68,6 +68,9 @@ test('browser HTTP workflow, persistence and local security', { timeout: 120_000
   try {
     await t.test('rejects untrusted browser requests and arbitrary filesystem access', async () => {
       assert.equal((await fetch(base + '/api/health')).status, 200);
+      const capabilities = await call('/api/capabilities');
+      assert.ok(capabilities.formats.includes('pdf'));
+      assert.ok(capabilities.formats.includes('docx'));
       assert.equal((await fetch(base + '/api/health', { headers: { origin: 'https://untrusted.invalid' } })).status, 403);
       const rejectedHost = await new Promise<number | undefined>((resolve, reject) => {
         const request = httpRequest(base + '/api/health', { headers: { Host: 'untrusted.invalid' } }, response => { response.resume(); resolve(response.statusCode); });

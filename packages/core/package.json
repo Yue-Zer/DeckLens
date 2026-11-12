@@ -18,10 +18,14 @@
   "dependencies": {
     "@decklens/contracts": "*",
     "fast-xml-parser": "^5.2.5",
-    "jszip": "^3.10.1"
+    "jszip": "^3.10.1",
+    "pdfjs-dist": "^6.5.438",
+    "pngjs": "^7.0.0"
   },
   "devDependencies": {
     "@types/node": "^24.0.0",
+    "@types/pngjs": "^6.0.5",
+    "pdf-lib": "^1.17.1",
     "typescript": "^5.9.2"
   }
 }

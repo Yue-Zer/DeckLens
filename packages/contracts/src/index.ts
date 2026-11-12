@@ -1,4 +1,4 @@
-export type DocumentFormat = "pptx" | "markdown" | "txt";
+export type DocumentFormat = "pptx" | "pdf" | "docx" | "markdown" | "txt";
 export type BlockType = "heading" | "paragraph" | "list" | "table" | "image" | "formula" | "code" | "note";
 export type NodeKind = "qa" | "explanation" | "note";
 export type EdgeKind = "deepens" | "branch" | "related";
@@ -20,6 +20,9 @@ export interface SourceLocator {
   textEnd?: number;
   excerpt?: string;
   confidence?: number;
+  headingSource?: "native-outline" | "native-style" | "automatic-inference";
+  /** True when complex PDF layout prevents reliable reading-order reconstruction. */
+  readingOrderWarning?: boolean;
 }
 
 export type AnnotationTool = "pen" | "highlighter" | "lasso";
@@ -130,6 +133,7 @@ export interface DocumentTree {
   sections: SectionRecord[];
   sectionEditsNeedReview?: number;
   sourceConflictsNeedReview?: number;
+  metadata?: Record<string, unknown>;
 }
 
 export interface ExploreNode {

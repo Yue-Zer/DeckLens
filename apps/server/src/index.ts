@@ -185,7 +185,7 @@ function imageContentType(bytes: Buffer) {
   return "application/octet-stream";
 }
 
-function runImportWorker(dataDir: string, task: ImportTask): Promise<WorkerResult> {
+function runImportWorker(dataDir: string, task: ImportTask, onProgress?: (event: { progress: number; message: string }) => void): Promise<WorkerResult> {
   return new Promise((resolveResult, reject) => {
     const workerUrl = new URL(import.meta.filename.endsWith(".ts") ? "./import-worker.ts" : "./import-worker.js", import.meta.url);
     const child = fork(workerUrl, [dataDir], { stdio: ["ignore", "ignore", "ignore", "ipc"], windowsHide: true });
@@ -193,7 +193,11 @@ function runImportWorker(dataDir: string, task: ImportTask): Promise<WorkerResul
     child.once("error", error => { settled = true; reject(error); });
     child.on("message", (message: unknown) => {
       if (settled || !message || typeof message !== "object") return;
-      const result = message as { ok?: boolean; result?: WorkerResult; error?: { code?: string; message?: string } };
+      const result = message as { kind?: string; progress?: number; message?: string; ok?: boolean; result?: WorkerResult; error?: { code?: string; message?: string } };
+      if (result.kind === "progress") {
+        if (typeof result.progress === "number" && typeof result.message === "string") onProgress?.({ progress: result.progress, message: result.message });
+        return;
+      }
       settled = true;
       if (result.ok && result.result) resolveResult(result.result);
       else reject(Object.assign(new Error(result.error?.message || "解析子进程处理失败。"), { code: result.error?.code || "PARSER_FAILED" }));
@@ -239,7 +243,7 @@ export function createServer(options: ServerOptions = {}) {
   });
 
   app.get("/api/health", (_req, res) => res.json({ ok: true, product: "DeckLens" }));
-  app.get("/api/capabilities", (_req, res) => res.json({ formats: ["pptx", "md", "markdown", "txt"], maxUploadBytes: MAX_UPLOAD_BYTES, aiConfigured: Boolean(core.settings.getPublic().hasApiKey || core.settings.getPublic().provider === "ollama"), modelConfigured: Boolean(core.settings.getPublic().model) }));
+  app.get("/api/capabilities", (_req, res) => res.json({ formats: ["pdf", "docx", "pptx", "md", "markdown", "txt"], maxUploadBytes: MAX_UPLOAD_BYTES, aiConfigured: Boolean(core.settings.getPublic().hasApiKey || core.settings.getPublic().provider === "ollama"), modelConfigured: Boolean(core.settings.getPublic().model) }));
 
   app.post("/api/imports", upload.array("files", 20), asyncRoute(async (req, res) => {
     const files = (req.files as Express.Multer.File[] | undefined) || [];
@@ -256,7 +260,9 @@ export function createServer(options: ServerOptions = {}) {
         const file = files[index];
         if (job.cancelRequested) break;
         try {
-          const result = await runImportWorker(dataDir, { kind: "import", path: file.path, originalName: cleanFileName(file.originalname), forceReparse });
+          const result = await runImportWorker(dataDir, { kind: "import", path: file.path, originalName: cleanFileName(file.originalname), forceReparse }, event => {
+            updateJob(job, { progress: Math.max(job.progress, Math.min(99, Math.floor((index * 100 + event.progress) / files.length))), message: cleanFileName(file.originalname) + " · " + event.message });
+          });
           job.documents!.push({ ...result.document, duplicate: result.duplicate });
         } catch (error) {
           job.errors!.push({ name: cleanFileName(file.originalname), message: errorMessage(error) });
@@ -296,7 +302,7 @@ export function createServer(options: ServerOptions = {}) {
       if (job.cancelRequested) { updateJob(job, { status: "cancelled", progress: 100, message: "重新解析已取消" }); return; }
       updateJob(job, { status: "processing", progress: 10, message: "重新解析文档" });
       try {
-        const result = await runImportWorker(dataDir, { kind: "reparse", documentId: req.params.id });
+        const result = await runImportWorker(dataDir, { kind: "reparse", documentId: req.params.id }, event => updateJob(job, { progress: Math.max(job.progress, event.progress), message: event.message }));
         updateJob(job, { status: job.cancelRequested ? "cancelled" : "completed", progress: 100, message: job.cancelRequested ? "当前解析已完成并保存，重新解析任务已结束" : "重新解析完成", result, documents: [result.document], errors: [] });
       } catch (error) {
         updateJob(job, { status: "failed", progress: 100, message: "重新解析失败", error: { code: "REPARSE_FAILED", message: errorMessage(error) }, errors: [{ name: req.params.id, message: errorMessage(error) }] });

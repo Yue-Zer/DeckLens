@@ -1,5 +1,26 @@
 # Changelog
 
+## v0.2.0 - 2026-11-12
+
+Native PDF and DOCX parsing for the local Web reader.
+
+### Included
+
+- PDF text-layer parsing through pdfjs-dist, including page locators, native outlines, automatic heading inference, conservative tables, embedded images, multi-column warnings, encrypted-file errors, and explicit scan-only refusal without OCR.
+- DOCX OOXML parsing through local JSZip and XML readers, including Heading styles, paragraphs, lists, tables, basic run emphasis, embedded media, and best-effort notes.
+- PDF/DOCX imports reuse SHA-256 deduplication, the background worker, progress polling, versioned reparse, section edits, source citations, terms, annotations, and exploration.
+- Extracted images are stored under the local data directory; the database stores asset paths and metadata.
+- Native image dimensions reserve reader space before lazy loading, keeping page and citation jumps stable. Historical citations resolve to unchanged current-version blocks only when their immutable source and content match uniquely.
+- Native parser regression fixtures and a local validation script.
+
+### Known limitations
+
+- No OCR. PDFs with an empty or extremely sparse text layer are rejected as scans.
+- PDF multi-column, rotated, overlapping and complex table layouts can still produce an order warning or text fallback.
+- DOCX complex layout, field codes, some numbering inheritance, SmartArt, vector/TIFF media and some note relationships are simplified or ignored.
+- Annotations remain bound to their original parse version; automatic migration of drawn marks is not implemented. Very long readers are not virtualized, and browser frame-rate/memory limits have not been benchmarked.
+- The supplied TB1 PDFs all contain native text and outlines; no real scan PDF was available, so scan rejection uses a local image-only fixture. The supplied lecture DOCX has no images, while the local course-report DOCX yields one embedded image; OOXML fixtures cover image relationship edge cases.
+
 ## v0.1.0 - 2026-11-11
 
 First local browser release scope.
@@ -16,7 +37,7 @@ First local browser release scope.
 
 ### Known limitations
 
-- PDF and DOCX are recognized but not parsed. OCR, translation, and full-fidelity Markdown rendering are not included.
+- At the v0.1.0 release point, PDF and DOCX were recognized but not parsed. OCR, translation, and full-fidelity Markdown rendering were not included in that release.
 - Advanced PPTX elements such as SmartArt, charts, complex tables, and exact slide layout are not fully supported.
 - AI actions require a configured model. Without one, reading, annotations, and local note nodes remain available.
 - The bottom global question composer is a disabled placeholder. Questions are currently started from terms, exploration nodes, and lasso selections.

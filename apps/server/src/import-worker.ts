@@ -11,7 +11,11 @@ process.once("message", async (task: Task) => {
   let core: ReturnType<typeof createCore> | undefined;
   let reply: unknown;
   try {
-    core = createCore(process.argv[2]);
+    let lastProgress = 0;
+    core = createCore(process.argv[2], { onImportProgress: event => {
+      const progress = Math.max(lastProgress, event.progress); lastProgress = progress;
+      process.send?.({ kind: "progress", progress, message: event.message });
+    } });
     const result = task.kind === "import"
       ? await core.documents.importFile(task.path, { originalName: task.originalName, forceReparse: task.forceReparse })
       : await core.documents.reparse(task.documentId);

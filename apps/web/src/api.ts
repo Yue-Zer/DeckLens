@@ -173,7 +173,7 @@ export const api: PlatformAdapter = {
   deleteDocument: (id: string) => request<void>(`/api/documents/${encodeURIComponent(id)}`, { method: 'DELETE' }),
   reparseDocument: (id: string) => request<{ jobId: string }>(`/api/documents/${encodeURIComponent(id)}/reparse`, { method: 'POST' }),
   getTree: async (id: string) => {
-    const data = await request<{ document?: Record<string, unknown>; versionId?: string; sections?: Section[]; tree?: Section[]; sectionEditsNeedReview?: number }>(`/api/documents/${encodeURIComponent(id)}/tree`)
+    const data = await request<{ document?: Record<string, unknown>; versionId?: string; sections?: Section[]; tree?: Section[]; sectionEditsNeedReview?: number; metadata?: Record<string, unknown> }>(`/api/documents/${encodeURIComponent(id)}/tree`)
     return { ...data, document: data.document ? normalizeDocument(data.document) : undefined }
   },
   getBlocks: async (id: string): Promise<ContentBlock[]> => {

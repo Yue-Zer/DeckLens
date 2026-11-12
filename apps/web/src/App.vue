@@ -5,14 +5,17 @@ import { api, type AnnotationTool, type ContentBlock, type DocumentSummary, type
 import AnnotationLayer from './components/AnnotationLayer.vue'
 import ExplorePanel from './components/ExplorePanel.vue'
 import ProviderSettings from './components/ProviderSettings.vue'
+import { resolveSourceBlock } from './source-navigation'
 
 type FlatSection = Section & { depth: number; ancestors: string[] }
 type ReaderEntry = { kind: 'section'; section: Section; blockId?: string } | { kind: 'block'; block: ContentBlock }
+type TextSegment = { text: string; term?: Term; start?: number; end?: number; selected?: boolean; bold?: boolean; italic?: boolean; code?: boolean }
 
 const documents = ref<DocumentSummary[]>([])
 const activeDocumentId = ref('')
 const sections = ref<Section[]>([])
 const blocks = ref<ContentBlock[]>([])
+const parseMetadata = ref<Record<string, unknown>>({})
 const terms = ref<Term[]>([])
 const exploreNodes = ref<ExploreNode[]>([])
 const exploreEdges = ref<ExploreEdge[]>([])
@@ -73,6 +76,7 @@ let blockObserver: IntersectionObserver | null = null
 let importGeneration = 0
 
 const activeDocument = computed(() => documents.value.find(item => item.id === activeDocumentId.value) ?? null)
+const blocksById = computed(() => new Map(blocks.value.map(block => [block.id, block])))
 const filteredDocuments = computed(() => {
   const query = searchText.value.trim().toLocaleLowerCase()
   return query ? documents.value.filter(item => `${item.title} ${item.name} ${item.format}`.toLocaleLowerCase().includes(query)) : documents.value
@@ -132,6 +136,13 @@ const readerEntries = computed<ReaderEntry[]>(() => {
     const section = block.sectionId ? sectionById.get(block.sectionId) : undefined
     const isDocumentTitle = isHeading(block) && Boolean(title) && normalizeHeading(text) === title
     let sectionHeadingBlock = false
+    if (section) for (const ancestorId of section.ancestors) {
+      const ancestor = sectionById.get(ancestorId)
+      if (ancestor && !emittedSections.has(ancestorId)) {
+        emittedSections.add(ancestorId)
+        entries.push({ kind: 'section', section: ancestor })
+      }
+    }
     if (section && !emittedSections.has(section.id)) {
       emittedSections.add(section.id)
       sectionHeadingBlock = isHeading(block) && normalizeHeading(text) === normalizeHeading(section.title)
@@ -151,6 +162,10 @@ const readerEntries = computed<ReaderEntry[]>(() => {
 
 const documentTitleBlockId = computed(() => orderedBlocks.value.find(block => isHeading(block) && normalizeHeading(blockText(block)) === normalizeHeading(activeDocument.value?.title ?? ''))?.id ?? '')
 const activeFormat = computed(() => activeDocument.value?.format?.toUpperCase() || activeDocument.value?.name.split('.').pop()?.toUpperCase() || 'DOC')
+const parseWarningText = computed(() => {
+  const warnings = Array.isArray(parseMetadata.value.warnings) ? parseMetadata.value.warnings.map(value => String(value)).join('；') : ''
+  return warnings || (parseMetadata.value.readingOrderWarning ? '阅读顺序可能不准。' : '')
+})
 const annotationMenuStyle = computed(() => {
   const selection = annotationSelection.value
   if (!selection) return {}
@@ -180,7 +195,7 @@ function isHeading(block: ContentBlock) { return block.type === 'heading' || blo
 function blockText(block: ContentBlock) { return String(block.plainText ?? block.text ?? '') }
 function textSegments(blockId: string, text: string, sourceStart = 0) {
   const matches = mentionsByBlock.value.get(blockId) ?? []
-  const result: Array<{ text: string; term?: Term; start?: number; end?: number; selected?: boolean }> = []
+  const result: TextSegment[] = []
   let cursor = 0
   for (const match of matches) {
     const start = match.start - sourceStart
@@ -192,9 +207,25 @@ function textSegments(blockId: string, text: string, sourceStart = 0) {
     cursor = end
   }
   if (cursor < text.length) result.push({ text: text.slice(cursor) })
-  return result.length ? result : [{ text }]
+  const base = result.length ? result : [{ text }]
+  const runs = blocksById.value.get(blockId)?.payload?.runs
+  if (!Array.isArray(runs)) return base
+  let runCursor = 0
+  const ranges = runs.map(value => {
+    const run = value as { text?: string; bold?: boolean; italic?: boolean; code?: boolean }
+    const start = runCursor; runCursor += String(run.text ?? '').length
+    return { ...run, start, end: runCursor }
+  })
+  let styleCursor = sourceStart
+  return base.flatMap((segment): TextSegment[] => {
+    const start = styleCursor; styleCursor += segment.text.length
+    const overlaps = ranges.filter(run => run.end > start && run.start < styleCursor)
+    if (!overlaps.length) return [segment]
+    if (segment.term) return [{ ...segment, bold: overlaps.every(run => run.bold), italic: overlaps.every(run => run.italic), code: overlaps.every(run => run.code) }]
+    return overlaps.map(run => ({ text: segment.text.slice(Math.max(start, run.start) - start, Math.min(styleCursor, run.end) - start), bold: run.bold, italic: run.italic, code: run.code }))
+  })
 }
-function listTextSegments(block: ContentBlock, itemIndex: number) {
+function listTextSegments(block: ContentBlock, itemIndex: number): TextSegment[] {
   const items = listItems(block)
   const item = items[itemIndex] ?? ''
   const source = blockText(block)
@@ -227,6 +258,12 @@ function assetId(block: ContentBlock) {
   const asset = data.asset && typeof data.asset === 'object' ? data.asset as Record<string, unknown> : {}
   const value = data.assetId ?? asset.id ?? asset.assetId
   return typeof value === 'string' && value.length ? value : ''
+}
+function imageDimensions(block: ContentBlock) {
+  const width = Number(payload(block).width)
+  const height = Number(payload(block).height)
+  if (!Number.isFinite(width) || !Number.isFinite(height) || width <= 0 || height <= 0) return {}
+  return { width, height, style: { width: `${Math.min(width, 640 * width / height)}px`, aspectRatio: `${width} / ${height}` } }
 }
 function listItems(block: ContentBlock): string[] {
   const data = payload(block)
@@ -272,8 +309,20 @@ function jumpToBlock(blockId: string) {
   rightDrawerOpen.value = false
   saveExploreViewSoon()
 }
-function jumpToSource(blockId: string, annotationId?: string) {
-  if (annotationId) highlightedAnnotationId.value = annotationId
+async function jumpToSource(blockId: string, annotationId?: string) {
+  const documentId = activeDocumentId.value
+  if (!blocksById.value.has(blockId)) {
+    try {
+      const historical = await api.getBlock(blockId)
+      if (activeDocumentId.value !== documentId) return
+      const current = resolveSourceBlock(historical, blocks.value)
+      if (!current) { notify('该引用属于历史解析版本，当前正文无法安全匹配原位置。'); return }
+      blockId = current.id
+      annotationId = undefined
+      notify('已定位到当前版本中来源和内容一致的位置；旧标注仍保留在历史版本。')
+    } catch (error) { notify(errorMessage(error)); return }
+  }
+  highlightedAnnotationId.value = annotationId ?? ''
   jumpToBlock(blockId)
   const target = document.getElementById(`block-${blockId}`)
   if (target) {
@@ -627,6 +676,7 @@ async function openDocument(documentId: string) {
     const [tree, nextBlocks, nextTerms] = await Promise.all([api.getTree(documentId), api.getBlocks(documentId), api.getTerms(documentId)])
     if (disposed || requestId !== viewRequest || activeDocumentId.value !== documentId) return
     sections.value = tree.sections ?? tree.tree ?? []
+    parseMetadata.value = tree.metadata ?? {}
     blocks.value = nextBlocks
     terms.value = nextTerms
     const saved = api.getReaderView(documentId)
@@ -710,6 +760,8 @@ async function reparseDocument() {
   const documentId = activeDocumentId.value
   if (!documentId || reparsing.value || importing.value) return
   reparsing.value = true
+  importProgress.value = 0
+  importMessage.value = '等待重新解析文档'
   readerError.value = ''
   try {
     const { jobId } = await api.reparseDocument(documentId)
@@ -804,7 +856,7 @@ onUnmounted(() => {
       </div>
     </header>
 
-    <div v-if="importing" class="job-banner" role="status" aria-live="polite">
+    <div v-if="importing || reparsing" class="job-banner" role="status" aria-live="polite">
       <span class="progress-track"><i :style="{ width: `${importProgress}%` }"></i></span>
       <span>{{ importMessage }}<template v-if="importProgress"> · {{ importProgress }}%</template></span>
     </div>
@@ -825,7 +877,7 @@ onUnmounted(() => {
           </button>
           <p v-if="libraryLoading" class="muted-note">正在读取本机文档…</p>
           <div v-else-if="libraryError" class="inline-error" role="alert"><strong>无法读取文档库</strong><span>{{ libraryError }}</span><button class="secondary-button" @click="loadLibrary">重试</button></div>
-          <div v-else-if="!filteredDocuments.length" class="empty-library"><BookOpen :size="20" /><strong>{{ documents.length ? '没有匹配的文档' : '从一份文档开始' }}</strong><span>{{ documents.length ? '调整搜索词，或清空搜索。' : '拖入 PPTX、Markdown 或 TXT，原文会保存在本机。' }}</span></div>
+          <div v-else-if="!filteredDocuments.length" class="empty-library"><BookOpen :size="20" /><strong>{{ documents.length ? '没有匹配的文档' : '从一份文档开始' }}</strong><span>{{ documents.length ? '调整搜索词，或清空搜索。' : '拖入 PDF、DOCX、PPTX、Markdown 或 TXT，原文会保存在本机。' }}</span></div>
         </div>
 
         <div class="rail-divider"></div>
@@ -870,13 +922,14 @@ onUnmounted(() => {
 
         <div v-if="readerLoading" class="reader-scroll"><div class="reading-card loading-state" aria-live="polite"><span class="loading-rule"></span><p>正在读取文档结构…</p></div></div>
         <div v-else-if="readerError" class="reader-scroll"><div class="reading-card error-state" role="alert"><FileText :size="22" /><h2>文档暂时无法读取</h2><p>{{ readerError }}</p><button class="secondary-button" @click="activeDocumentId && openDocument(activeDocumentId)">重试</button></div></div>
-        <div v-else-if="!activeDocument" class="reader-scroll"><section class="welcome-state"><span class="welcome-index">LOCAL READER</span><h2>从原文开始，<br /><em>把知识读清楚。</em></h2><p>导入 PPTX、Markdown 或 TXT，DeckLens 会按原文结构生成可定位的阅读视图。</p><button class="primary-button" @click="fileInput?.click()"><FilePlus2 :size="17" />选择文档</button></section></div>
+        <div v-else-if="!activeDocument" class="reader-scroll"><section class="welcome-state"><span class="welcome-index">LOCAL READER</span><h2>从原文开始，<br /><em>把知识读清楚。</em></h2><p>导入 PDF、DOCX、PPTX、Markdown 或 TXT，DeckLens 会按原生结构生成可定位的阅读视图。</p><button class="primary-button" @click="fileInput?.click()"><FilePlus2 :size="17" />选择文档</button></section></div>
         <div v-else ref="readerScroller" class="reader-scroll" @scroll.passive="onReaderScroll">
           <article class="reading-card">
             <header class="document-intro">
               <div class="format-line"><span>{{ activeFormat }}</span><i></i><span>{{ activeDocument.language || '原文' }}</span></div>
               <h1 :id="documentTitleBlockId ? `block-${documentTitleBlockId}` : undefined" :data-block-id="documentTitleBlockId || undefined">{{ activeDocument.title || activeDocument.name }}</h1>
               <p>{{ allSections.length }} 个章节 · {{ orderedBlocks.length }} 个内容块</p>
+              <p v-if="parseWarningText" class="status-note">解析提示：{{ parseWarningText }}</p>
               <p v-if="activeDocument.status && activeDocument.status !== 'ready'" class="status-note">文档状态：{{ activeDocument.status }}</p>
             </header>
 
@@ -885,12 +938,12 @@ onUnmounted(() => {
               <template v-for="entry in readerEntries" :key="entry.kind === 'block' ? `block:${entry.block.id}` : `section:${entry.section.id}`">
                 <component v-if="entry.kind === 'section'" :is="entry.section.depth && entry.section.depth > 0 ? 'h3' : 'h2'" :id="entry.blockId ? `block-${entry.blockId}` : `section-${entry.section.id}`" class="section-heading" :class="`level-${Math.min((entry.section.depth ?? entry.section.level ?? 0) + 1, 4)}`" :data-block-id="entry.blockId" :data-section-id="entry.section.id">{{ entry.section.title }}</component>
                 <div v-else :id="`block-${entry.block.id}`" class="content-block" :class="`block-${entry.block.type}`" :data-block-id="entry.block.id" tabindex="-1">
-                  <h3 v-if="isHeading(entry.block)" class="block-heading"><template v-for="(segment, index) in textSegments(entry.block.id, blockText(entry.block))" :key="index"><button v-if="segment.term" class="term-anchor" :class="{ selected: segment.selected }" @click.stop="openTerm(segment.term, entry.block.id, segment.start ?? 0, segment.end ?? 0, $event.currentTarget as HTMLElement)">{{ segment.text }}</button><span v-else>{{ segment.text }}</span></template></h3>
-                  <p v-else-if="['paragraph','text'].includes(entry.block.type)" class="reader-paragraph"><template v-for="(segment, index) in textSegments(entry.block.id, blockText(entry.block))" :key="index"><button v-if="segment.term" class="term-anchor" :class="{ selected: segment.selected }" @click.stop="openTerm(segment.term, entry.block.id, segment.start ?? 0, segment.end ?? 0, $event.currentTarget as HTMLElement)">{{ segment.text }}</button><span v-else>{{ segment.text }}</span></template></p>
-                  <ul v-else-if="entry.block.type === 'list'" class="reader-list"><li v-for="(item, index) in listItems(entry.block)" :key="`${entry.block.id}-${index}`"><template v-for="(segment, segmentIndex) in listTextSegments(entry.block, index)" :key="segmentIndex"><button v-if="segment.term" class="term-anchor" :class="{ selected: segment.selected }" @click.stop="openTerm(segment.term, entry.block.id, segment.start ?? 0, segment.end ?? 0, $event.currentTarget as HTMLElement)">{{ segment.text }}</button><span v-else>{{ segment.text }}</span></template></li></ul>
+                  <h3 v-if="isHeading(entry.block)" class="block-heading"><template v-for="(segment, index) in textSegments(entry.block.id, blockText(entry.block))" :key="index"><button v-if="segment.term" class="term-anchor" :class="{ selected: segment.selected, 'inline-bold': segment.bold, 'inline-italic': segment.italic, 'inline-code': segment.code }" @click.stop="openTerm(segment.term, entry.block.id, segment.start ?? 0, segment.end ?? 0, $event.currentTarget as HTMLElement)">{{ segment.text }}</button><span v-else :class="{ 'inline-bold': segment.bold, 'inline-italic': segment.italic, 'inline-code': segment.code }">{{ segment.text }}</span></template></h3>
+                  <p v-else-if="['paragraph','text'].includes(entry.block.type)" class="reader-paragraph"><template v-for="(segment, index) in textSegments(entry.block.id, blockText(entry.block))" :key="index"><button v-if="segment.term" class="term-anchor" :class="{ selected: segment.selected, 'inline-bold': segment.bold, 'inline-italic': segment.italic, 'inline-code': segment.code }" @click.stop="openTerm(segment.term, entry.block.id, segment.start ?? 0, segment.end ?? 0, $event.currentTarget as HTMLElement)">{{ segment.text }}</button><span v-else :class="{ 'inline-bold': segment.bold, 'inline-italic': segment.italic, 'inline-code': segment.code }">{{ segment.text }}</span></template></p>
+                  <component v-else-if="entry.block.type === 'list'" :is="payload(entry.block).ordered ? 'ol' : 'ul'" :start="payload(entry.block).ordered ? Number(payload(entry.block).start || 1) : undefined" class="reader-list"><li v-for="(item, index) in listItems(entry.block)" :key="`${entry.block.id}-${index}`"><template v-for="(segment, segmentIndex) in listTextSegments(entry.block, index)" :key="segmentIndex"><button v-if="segment.term" class="term-anchor" :class="{ selected: segment.selected, 'inline-bold': segment.bold, 'inline-italic': segment.italic, 'inline-code': segment.code }" @click.stop="openTerm(segment.term, entry.block.id, segment.start ?? 0, segment.end ?? 0, $event.currentTarget as HTMLElement)">{{ segment.text }}</button><span v-else :class="{ 'inline-bold': segment.bold, 'inline-italic': segment.italic, 'inline-code': segment.code }">{{ segment.text }}</span></template></li></component>
                   <div v-else-if="entry.block.type === 'table'" class="table-scroll"><table v-if="tableRows(entry.block).length"><tbody><tr v-for="(row, rowIndex) in tableRows(entry.block)" :key="rowIndex"><td v-for="(cell, cellIndex) in row" :key="cellIndex">{{ cell }}</td></tr></tbody></table><p v-else class="reader-paragraph">{{ blockText(entry.block) }}</p></div>
                   <figure v-else-if="entry.block.type === 'image'" class="reader-image">
-                    <img v-if="assetId(entry.block)" :src="api.getAssetUrl(assetId(entry.block))" :alt="String(payload(entry.block).alt ?? payload(entry.block).caption ?? '文档图片')" loading="lazy" decoding="async" @error="onAssetError" />
+                    <img v-if="assetId(entry.block)" v-bind="imageDimensions(entry.block)" :src="api.getAssetUrl(assetId(entry.block))" :alt="String(payload(entry.block).alt ?? payload(entry.block).caption ?? '文档图片')" loading="lazy" decoding="async" @error="onAssetError" />
                     <figcaption>{{ String(payload(entry.block).caption ?? payload(entry.block).alt ?? (assetId(entry.block) ? '文档图片' : '图片未能从本地文档中提取。')) }}</figcaption>
                   </figure>
                   <pre v-else-if="entry.block.type === 'code'" class="code-block"><code>{{ blockText(entry.block) }}</code></pre>
@@ -940,7 +993,7 @@ onUnmounted(() => {
     </section>
 
     <div v-if="leftDrawerOpen || rightDrawerOpen" class="drawer-backdrop" @click="leftDrawerOpen = false; rightDrawerOpen = false"></div>
-    <div v-if="draggingFiles" class="drop-overlay" aria-live="polite"><div><FilePlus2 :size="24" /><strong>松开以导入文档</strong><span>PPTX · Markdown · TXT</span></div></div>
+    <div v-if="draggingFiles" class="drop-overlay" aria-live="polite"><div><FilePlus2 :size="24" /><strong>松开以导入文档</strong><span>PDF · DOCX · PPTX · Markdown · TXT</span></div></div>
     <div v-if="notice" class="toast" role="status">{{ notice }}</div>
     <ProviderSettings v-if="providerSettingsOpen" @close="providerSettingsOpen = false; refreshModelAvailability()" />
   </div>

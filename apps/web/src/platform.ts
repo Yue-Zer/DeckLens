@@ -1,8 +1,11 @@
 export type SourceLocator = {
   format?: string
+  sourceHash?: string
   pageNumber?: number
   slideNumber?: number
   headingPath?: string[]
+  headingSource?: 'native-outline' | 'native-style' | 'automatic-inference'
+  readingOrderWarning?: boolean
   paragraphIndex?: number
   excerpt?: string
   textStart?: number
@@ -210,6 +213,7 @@ export type DocumentTree = {
   sections?: Section[]
   tree?: Section[]
   sectionEditsNeedReview?: number
+  metadata?: Record<string, unknown>
 }
 export type ChatSummary = { chatId: string; title: string }
 export type AskResult = {

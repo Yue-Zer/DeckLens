@@ -2,6 +2,8 @@ import { createHash } from "node:crypto";
 import { extname, posix } from "node:path";
 import JSZip from "jszip";
 import { XMLParser } from "fast-xml-parser";
+import { parsePdf } from "./parsers/pdf.js";
+import { parseDocx } from "./parsers/docx.js";
 import type { BlockType, DocumentFormat, SourceLocator } from "./types.js";
 
 export interface ParsedBlock {
@@ -30,12 +32,16 @@ export interface ParsedDocument {
   title: string;
   language: string;
   sections: ParsedSection[];
+  metadata?: Record<string, unknown>;
 }
 
 export interface InputFile {
   bytes: Buffer;
   originalName: string;
 }
+
+export interface ParseProgress { progress: number; message: string }
+export type ProgressCallback = (event: ParseProgress) => void;
 
 const xml = new XMLParser({
   ignoreAttributes: false,
@@ -54,10 +60,10 @@ export function sha256(bytes: Buffer): string {
 export function detectFormat(bytes: Buffer, originalName: string): DocumentFormat {
   const extension = extname(originalName).toLowerCase();
   if (bytes.length === 0) throw new Error("EMPTY_FILE: 文件为空。");
-  if (bytes.subarray(0, 5).toString("ascii") === "%PDF-") throw new Error("UNSUPPORTED_PDF: 当前版本尚未接入 PDF 原生解析，请先导入 PPTX、Markdown 或 TXT。");
-  if (bytes.subarray(0, 8).toString("hex") === "d0cf11e0a1b11ae1") throw new Error("ENCRYPTED_OR_LEGACY_OFFICE: 检测到加密 Office 或旧版二进制 Office 文档；请另存为未加密 PPTX 后导入。");
+  if (bytes.subarray(0, 5).toString("ascii") === "%PDF-") return "pdf";
+  if (bytes.subarray(0, 8).toString("hex") === "d0cf11e0a1b11ae1") throw new Error("ENCRYPTED_OR_LEGACY_OFFICE: 检测到加密 Office 或旧版二进制 Office 文档；请另存为未加密的 PDF、DOCX 或 PPTX 后导入。");
   if (bytes.length >= 4 && bytes.subarray(0, 2).toString("hex") === "504b") {
-    if (bytes.includes(Buffer.from("word/document.xml")) || extension === ".docx") throw new Error("UNSUPPORTED_DOCX: 已识别为 DOCX；当前版本尚未接入 DOCX 原生解析，请另存为 Markdown/TXT 或等待后续版本。");
+    if (bytes.includes(Buffer.from("word/document.xml")) || extension === ".docx") return "docx";
     // The ZIP filename is only a candidate. parsePptx verifies its content types and native parts.
     if (bytes.includes(Buffer.from("ppt/presentation.xml")) || extension === ".pptx") return "pptx";
     throw new Error("UNSUPPORTED_ARCHIVE: ZIP 文件不是支持的 PPTX 文档。");
@@ -66,11 +72,13 @@ export function detectFormat(bytes: Buffer, originalName: string): DocumentForma
   decodeText(bytes);
   if ([".md", ".markdown", ".mdown"].includes(extension)) return "markdown";
   if ([".txt", ".text"].includes(extension)) return "txt";
-  throw new Error("UNSUPPORTED_FORMAT: 首版支持 PPTX、Markdown 和 TXT 文件。");
+  throw new Error("UNSUPPORTED_FORMAT: 支持 PDF、DOCX、PPTX、Markdown 和 TXT 文件。");
 }
 
-export async function parseDocument(file: InputFile, format: DocumentFormat, sourceHash: string): Promise<ParsedDocument> {
+export async function parseDocument(file: InputFile, format: DocumentFormat, sourceHash: string, onProgress?: ProgressCallback): Promise<ParsedDocument> {
   if (format === "pptx") return normalizeParsedDocument(await parsePptx(file.bytes, sourceHash));
+  if (format === "pdf") return normalizeParsedDocument(await parsePdf(file.bytes, sourceHash, onProgress));
+  if (format === "docx") return normalizeParsedDocument(await parseDocx(file.bytes, sourceHash, onProgress));
   const text = decodeText(file.bytes);
   return normalizeParsedDocument(format === "markdown" ? parseMarkdown(text, sourceHash) : parseTxt(text, sourceHash));
 }

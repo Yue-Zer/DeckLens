@@ -5,7 +5,7 @@ import { dirname, extname, isAbsolute, join, relative, resolve, sep } from "node
 import { randomUUID, createHash } from "node:crypto";
 import { openDatabase } from "./database.js";
 import { completeWithProvider, streamWithProvider, testProvider } from "./providers.js";
-import { detectFormat, parseDocument, sha256, type ParsedBlock, type ParsedDocument, type ParsedSection } from "./parsers.js";
+import { detectFormat, parseDocument, sha256, type ParsedBlock, type ParsedDocument, type ParsedSection, type ProgressCallback } from "./parsers.js";
 import type {
   AnnotationRecord, AnnotationTarget, AskRequest, AskResult, BlockRecord, CreateAnnotationInput, DocumentRecord, DocumentTree, EdgeKind, ExploreEdge, ExploreNode, ImportResult,
   ModelChatRequest, ModelMessage, ProviderKind, ProviderProfile, ProviderProfileInput, ProviderProtocol, ProviderSettings,
@@ -13,7 +13,7 @@ import type {
 } from "./types.js";
 export * from "./types.js";
 
-export interface CreateCoreOptions { parserVersion?: string }
+export interface CreateCoreOptions { parserVersion?: string; onImportProgress?: ProgressCallback }
 
 export interface CreateNodeInput {
   documentId: string;
@@ -60,7 +60,7 @@ export function createCore(dataDir: string, options: CreateCoreOptions = {}) {
   const root = resolve(dataDir);
   for (const directory of ["originals", "assets", "notes", "tmp"]) mkdirSync(join(root, directory), { recursive: true });
   const db = openDatabase(root);
-  const parserVersion = options.parserVersion ?? "0.1.0";
+  const parserVersion = options.parserVersion ?? "0.2.0";
   prepare(db, "INSERT OR IGNORE INTO settings(setting_key,value_json,updated_at) VALUES(?,?,?)")
     .run("provider", JSON.stringify({ provider: "openai-compatible", baseUrl: "https://api.openai.com/v1", model: "" }), now());
 
@@ -74,6 +74,7 @@ export function createCore(dataDir: string, options: CreateCoreOptions = {}) {
         originalName = opts.originalName ?? resolvedInput.split(sep).at(-1) ?? "document";
       } else bytes = Buffer.from(input);
       const sourceHash = sha256(bytes);
+      options.onImportProgress?.({ progress: 2, message: "校验文件哈希并识别格式" });
       const duplicateRow = prepare(db, "SELECT * FROM documents WHERE source_hash=?").get(sourceHash) as DbRow | undefined;
       if (duplicateRow && !opts.forceReparse) {
         const doc = mapDocument(duplicateRow);
@@ -91,7 +92,8 @@ export function createCore(dataDir: string, options: CreateCoreOptions = {}) {
       try {
         const format = detectFormat(bytes, originalName);
         prepare(db, "UPDATE import_jobs SET format=? WHERE job_id=?").run(format, jobId);
-        const parsed = await parseDocument({ bytes, originalName }, format, sourceHash);
+        const parsed = await parseDocument({ bytes, originalName }, format, sourceHash, options.onImportProgress);
+        options.onImportProgress?.({ progress: 92, message: "保存原文件、图片并建立术语和检索索引" });
         const extension = extensionFor(format, originalName);
         const sourceRelativePath = `originals/${documentId}/${sourceHash}.${extension}`;
         const originalPath = resolve(root, ...sourceRelativePath.split("/"));
@@ -107,6 +109,7 @@ export function createCore(dataDir: string, options: CreateCoreOptions = {}) {
           activeVersionId: versionId, createdAt: duplicateRow?.created_at as string ?? startedAt, updatedAt: now()
         };
         persistParsedDocument(db, root, finalDoc, versionId, previousVersion + 1, parsed, parserVersion, jobId);
+        options.onImportProgress?.({ progress: 99, message: "文档已入库" });
       } catch (error) {
         const details = describeError(error);
         prepare(db, "UPDATE import_jobs SET status='failed',error_code=?,error_message=?,completed_at=? WHERE job_id=?")
@@ -128,6 +131,7 @@ export function createCore(dataDir: string, options: CreateCoreOptions = {}) {
     tree(documentId: string): DocumentTree {
       const document = getDocument(db, documentId);
       const versionId = document.activeVersionId;
+      const version = prepare(db, "SELECT metadata_json FROM document_versions WHERE version_id=?").get(versionId) as DbRow | undefined;
       const sectionRows = prepare(db, "SELECT * FROM sections WHERE version_id=? ORDER BY display_order,source_order").all(versionId) as DbRow[];
       const blockRows = prepare(db, "SELECT * FROM blocks WHERE version_id=? ORDER BY order_index,source_order").all(versionId) as DbRow[];
       const assets = assetsByBlock(db, versionId);
@@ -149,7 +153,7 @@ export function createCore(dataDir: string, options: CreateCoreOptions = {}) {
         if (parent) parent.children.push(section); else roots.push(section);
       }
       const sectionEditsNeedReview = (prepare(db, "SELECT COUNT(*) AS n FROM section_edits WHERE document_id=? AND state='needs_review'").get(documentId) as DbRow).n as number;
-      return { document, versionId, sections: roots, sectionEditsNeedReview };
+      return { document, versionId, sections: roots, sectionEditsNeedReview, metadata: parseJson(version?.metadata_json, {}) };
     },
     blocks(documentId: string, query: { sectionId?: string; offset?: number; limit?: number } = {}) {
       const { activeVersionId } = getDocument(db, documentId);
@@ -675,7 +679,7 @@ function parseJson<T>(value: unknown, fallback: T): T {
 function nullableString(value: unknown): string | undefined { return typeof value === "string" && value ? value : undefined; }
 function isWithin(root: string, path: string): boolean { const rel = relative(root, path); return !isAbsolute(rel) && rel !== ".." && !rel.startsWith(`..${sep}`); }
 function extensionFor(format: string, name: string): string { const ext = extname(name).replace(/^\./, "").toLowerCase(); return ext || format; }
-function mimeFor(format: string): string { return ({ pptx: "application/vnd.openxmlformats-officedocument.presentationml.presentation", markdown: "text/markdown; charset=utf-8", txt: "text/plain; charset=utf-8" } as Record<string, string>)[format] ?? "application/octet-stream"; }
+function mimeFor(format: string): string { return ({ pdf: "application/pdf", docx: "application/vnd.openxmlformats-officedocument.wordprocessingml.document", pptx: "application/vnd.openxmlformats-officedocument.presentationml.presentation", markdown: "text/markdown; charset=utf-8", txt: "text/plain; charset=utf-8" } as Record<string, string>)[format] ?? "application/octet-stream"; }
 function coreError(code: string, message: string): Error & { code: string } { return Object.assign(new Error(message), { code }); }
 function describeError(error: unknown): { code: string; message: string } {
   const text = error instanceof Error ? error.message : String(error);
@@ -730,7 +734,7 @@ function persistParsedDocument(db: SqliteDatabase, root: string, doc: DocumentRe
     else prepare(db, "INSERT INTO documents(document_id,source_hash,original_name,extension,format,mime_type,size_bytes,source_relpath,title,language,status,active_version_id,created_at,updated_at) VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?)")
       .run(doc.id, doc.sourceHash, doc.originalName, doc.extension, doc.format, doc.mimeType, doc.sizeBytes, doc.sourceRelativePath, doc.title, doc.language, doc.status, versionId, timestamp, timestamp);
     prepare(db, "INSERT INTO document_versions(version_id,document_id,version_no,source_hash,parser_version,parse_status,metadata_json,created_at,completed_at) VALUES(?,?,?,?,?,?,?,?,?)")
-      .run(versionId, doc.id, versionNo, doc.sourceHash, parserVersion, "parsing", JSON.stringify({ format: doc.format }), timestamp, null);
+        .run(versionId, doc.id, versionNo, doc.sourceHash, parserVersion, "parsing", JSON.stringify({ format: doc.format, ...(parsed.metadata ?? {}) }), timestamp, null);
     const insertSection = prepare(db, "INSERT INTO sections(section_id,version_id,source_section_key,parent_section_id,title,depth,source_order,display_order,origin,source_locator_json) VALUES(?,?,?,?,?,?,?,?,?,?)");
     for (const section of parsed.sections) {
       const sectionId = randomUUID();

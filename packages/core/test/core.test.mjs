@@ -393,7 +393,7 @@ test("failed reparse preserves the active version, edits, and historical source 
 test("text validation rejects binary masquerading as text and preserves UTF-16 text", async () => {
   await withCore(async core => {
     await assert.rejects(core.documents.importFile(Buffer.from([0xff, 0x00, 0x01, 0x02]), { originalName: "binary.md" }), /INVALID_TEXT_ENCODING|BINARY_TEXT_FILE/);
-    await assert.rejects(core.documents.importFile(Buffer.from("%PDF-1.7 fake"), { originalName: "renamed.txt" }), /UNSUPPORTED_PDF/);
+    await assert.rejects(core.documents.importFile(Buffer.from("%PDF-1.7 fake"), { originalName: "renamed.txt" }), /CORRUPT_PDF/);
     await assert.rejects(core.documents.importFile(Buffer.from("d0cf11e0a1b11ae1", "hex"), { originalName: "encrypted.pptx" }), /ENCRYPTED_OR_LEGACY_OFFICE/);
     const bytes = Buffer.concat([Buffer.from([0xff, 0xfe]), Buffer.from("第一章 文本\n\n本地文档解析正常。", "utf16le")]);
     const imported = await core.documents.importFile(bytes, { originalName: "utf16.txt" });

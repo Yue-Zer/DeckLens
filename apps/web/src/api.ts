@@ -215,12 +215,12 @@ export const api: PlatformAdapter = {
     const data = await request<Array<Record<string, unknown>> | { terms?: Array<Record<string, unknown>> }>(`/api/documents/${encodeURIComponent(id)}/terms`)
     return (Array.isArray(data) ? data : data.terms ?? []).map(normalizeTerm)
   },
-  listAnnotations: (id: string) => request<AnnotationRecord[]>(`/api/documents/${encodeURIComponent(id)}/annotations`),
+  listAnnotations: (id, scope = {}) => request<AnnotationRecord[]>(`/api/documents/${encodeURIComponent(id)}/annotations?${new URLSearchParams(Object.entries(scope).filter((entry): entry is [string, string] => typeof entry[1] === 'string'))}`),
   createAnnotation: (input: CreateAnnotationInput) => request<AnnotationRecord>('/api/annotations', {
     method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify(input),
   }),
   deleteAnnotation: (id: string) => request<void>(`/api/annotations/${encodeURIComponent(id)}`, { method: 'DELETE' }),
-  clearAnnotations: (documentId: string) => request<void>(`/api/documents/${encodeURIComponent(documentId)}/annotations`, { method: 'DELETE' }),
+  clearAnnotations: (documentId, scope = {}) => request<void>(`/api/documents/${encodeURIComponent(documentId)}/annotations?${new URLSearchParams(Object.entries(scope).filter((entry): entry is [string, string] => typeof entry[1] === 'string'))}`, { method: 'DELETE' }),
   getTerm: (id: string) => request<Term>(`/api/terms/${encodeURIComponent(id)}`),
   explainTerm: async (id: string) => normalizeTerm(await request<Record<string, unknown>>(`/api/terms/${encodeURIComponent(id)}/explain`, { method: 'POST' })),
   getGraph: async (id: string, chatId?: string) => {

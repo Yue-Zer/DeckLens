@@ -31,7 +31,7 @@ test("fresh SQLite migrates, persists, and reopens without source directory data
     assert.equal(core.documents.get(result.document.id).title, "机器学习");
     const db = new Database(join(dir, "db", "decklens.sqlite"), { readonly: true });
     try {
-      assert.equal(db.prepare("SELECT COUNT(*) AS n FROM schema_migrations").get().n, 6);
+      assert.equal(db.prepare("SELECT COUNT(*) AS n FROM schema_migrations").get().n, 7);
       assert.deepEqual(db.pragma("foreign_key_check"), []);
     } finally { db.close(); }
   } finally { await core.storage.close(); await rm(dir, { recursive: true, force: true }); }
@@ -67,6 +67,8 @@ test("v1 databases migrate without losing structure, exploration, sources or ind
     const old = new Database(join(dir, "db", "decklens.sqlite"));
     try {
       old.exec(`
+        DROP TABLE article_annotation_targets;
+        DROP TABLE article_annotations;
         DROP TABLE file_folder_memberships;
         DROP TABLE file_folders;
         DROP TABLE learning_article_figures;

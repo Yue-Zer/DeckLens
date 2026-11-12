@@ -9,7 +9,8 @@ import LearningArticleSection from './components/LearningArticleSection.vue'
 import CreateFolderDialog from './components/CreateFolderDialog.vue'
 import type { LearningArticle } from '@decklens/contracts'
 import { resolveSourceBlock } from './source-navigation'
-import { conversationPath, latestConversationId, type ConversationMode, type ReplyKind } from './conversation'
+import { conversationPath, latestConversationId, type ReplyKind } from './conversation'
+import { articleContentBlocks } from './article-content'
 
 type FlatSection = Section & { depth: number; ancestors: string[] }
 type ReaderEntry = { kind: 'section'; section: Section; blockId?: string } | { kind: 'block'; block: ContentBlock }
@@ -40,7 +41,6 @@ const exploreLoading = ref(false)
 const exploreBusy = ref(false)
 const exploreError = ref('')
 const chats = ref<ChatSummary[]>([])
-const conversationMode = ref<ConversationMode>('chat')
 const pendingReply = ref<{ nodeId: string; kind: ReplyKind } | null>(null)
 const pendingQuestion = ref('')
 const composerInput = ref<HTMLTextAreaElement | null>(null)
@@ -62,6 +62,8 @@ const readerMode = ref<'source' | 'article'>('source')
 const article = ref<LearningArticle | null>(null)
 const articleError = ref('')
 const articleStarting = ref(false)
+const articleBlocks = computed(() => articleContentBlocks(article.value))
+const canAnnotate = computed(() => Boolean(activeDocument.value && !readerLoading.value && (readerMode.value === 'source' || article.value?.status === 'ready')))
 let articleTimer = 0
 const importing = ref(false)
 const importProgress = ref(0)
@@ -82,6 +84,8 @@ const annotationTool = ref<AnnotationTool>('pointer')
 const highlightedAnnotationId = ref('')
 const annotationSelection = ref<{
   annotationId: string
+  surface?: 'source' | 'article'
+  revision?: string
   blockIds: string[]
   selectedText: string
   imageRefs: Array<{ blockId: string; assetId: string }>
@@ -451,6 +455,20 @@ async function jumpToSource(blockId: string, annotationId?: string) {
     window.setTimeout(() => target.classList.remove('citation-flash'), 1500)
   }
 }
+async function jumpToArticleSelection(node: ExploreNode) {
+  const selection = node.context?.articleSelection as { revision?: string; targetIds?: string[] } | undefined
+  if (!selection) return
+  if (!article.value || article.value.revision !== selection.revision || article.value.status !== 'ready') {
+    notify('这条圈选属于历史文章版本，当前文章无法安全匹配；可使用回答中的原文引用核对。')
+    return
+  }
+  readerMode.value = 'article'
+  await nextTick()
+  highlightedAnnotationId.value = typeof node.context?.annotationId === 'string' ? node.context.annotationId : ''
+  const target = document.getElementById(`article-target-${selection.targetIds?.[0]}`)
+  target?.scrollIntoView({ behavior: 'smooth', block: 'center' })
+  rightDrawerOpen.value = false
+}
 function saveViewSoon() {
   window.clearTimeout(saveTimer)
   saveTimer = window.setTimeout(() => {
@@ -467,7 +485,6 @@ function saveViewNow(documentId: string) {
       scrollTop: readerScroller.value?.scrollTop ?? 0,
       leftCollapsed: leftCollapsed.value,
       rightCollapsed: rightCollapsed.value,
-      conversationMode: conversationMode.value,
     })
 }
 function onPageHide() {
@@ -614,11 +631,6 @@ async function newConversation() {
   } catch (error) { if (requestId === viewRequest) exploreError.value = errorMessage(error) }
   finally { if (requestId === viewRequest) exploreBusy.value = false }
 }
-function setConversationMode(mode: ConversationMode) {
-  conversationMode.value = mode
-  pendingReply.value = null
-  saveViewSoon()
-}
 function prepareReply(nodeId: string, kind: ReplyKind) {
   pendingReply.value = { nodeId, kind }
   if (window.innerWidth <= 1199) rightDrawerOpen.value = true
@@ -732,7 +744,7 @@ async function deleteExploreBranch(nodeId: string) {
   finally { if (requestId === viewRequest && chatId === exploreChatId.value) exploreBusy.value = false }
 }
 function onAnnotationSelection(selection: NonNullable<typeof annotationSelection.value>) {
-  annotationSelection.value = selection
+  annotationSelection.value = { ...selection, surface: readerMode.value === 'article' ? 'article' : 'source', revision: readerMode.value === 'article' ? article.value?.revision : undefined }
   selectionQuestion.value = ''
   selectionQuestionOpen.value = false
   selectionError.value = ''
@@ -745,7 +757,7 @@ function closeAnnotationMenu() {
 }
 function clearDocumentAnnotations() {
   if (!activeDocumentId.value) return
-  if (window.confirm('清除当前文档的全部标注？此操作无法撤销。')) void annotationLayer.value?.clear()
+  if (window.confirm(readerMode.value === 'article' ? '清除当前文章版本的全部标注？此操作无法撤销。' : '清除当前原文版本的全部标注？此操作无法撤销。')) void annotationLayer.value?.clear()
 }
 async function submitAnnotationQuestion(action: 'explain' | 'ask' | 'card') {
   const selection = annotationSelection.value
@@ -764,14 +776,16 @@ async function submitAnnotationQuestion(action: 'explain' | 'ask' | 'card') {
       ? '根据这段圈选内容解释核心概念、关系和前置知识；严格依据文档，证据不足时请明确说明。'
       : selectionQuestion.value.trim()
   if (!question) { selectionQuestionOpen.value = true; selectionError.value = '写下你想针对这段内容了解的问题。'; return }
-  const sourceBlockId = selection.blockIds[0]
+  const selectedBlocks = selection.surface === 'article' ? articleBlocks.value : blocks.value
+  const first = selectedBlocks.find(block => block.id === selection.blockIds[0])
+  const sourceBlockId = selection.surface === 'article' ? (first?.payload?.sourceBlockIds as string[] | undefined)?.[0] : selection.blockIds[0]
   if (!sourceBlockId) { selectionError.value = '圈选区域没有覆盖可定位的文档内容。'; return }
   const parentNodeId = activeExploreNodeId.value || undefined
   const documentId = activeDocumentId.value
   const chatId = exploreChatId.value
   const requestId = viewRequest
   const selectionContext = selection.blockIds.map(id => {
-    const block = blocks.value.find(item => item.id === id)
+    const block = selectedBlocks.find(item => item.id === id)
     const text = block ? blockText(block).trim() : ''
     return text ? `[${sourceLabel(block?.locator ?? block?.sourceLocator)}] ${text}` : ''
   }).filter(Boolean).join('\n\n')
@@ -788,7 +802,8 @@ async function submitAnnotationQuestion(action: 'explain' | 'ask' | 'card') {
       question,
       selectedText: selection.selectedText,
       anchor: { blockId: sourceBlockId },
-      images: selection.imageRefs,
+      images: selection.surface === 'article' ? undefined : selection.imageRefs,
+      articleSelection: selection.surface === 'article' ? { revision: selection.revision, targetIds: selection.blockIds, annotationId: selection.annotationId } : undefined,
       context: {
         annotationId: selection.annotationId,
         selectionBlockIds: selection.blockIds,
@@ -806,7 +821,7 @@ async function submitAnnotationQuestion(action: 'explain' | 'ask' | 'card') {
     highlightedAnnotationId.value = selection.annotationId
     if (window.innerWidth <= 1199) rightDrawerOpen.value = true
     closeAnnotationMenu()
-    notify('回答已加入对话，并保留圈选原文位置。')
+    notify(selection.surface === 'article' ? '回答已加入对话，并保留文章圈选与原文引用。' : '回答已加入对话，并保留圈选原文位置。')
   } catch (error) {
     if (requestId !== viewRequest || chatId !== exploreChatId.value) return
     const message = errorMessage(error)
@@ -888,7 +903,6 @@ async function openDocument(documentId: string) {
     const saved = api.getReaderView(documentId)
     leftCollapsed.value = Boolean(saved.leftCollapsed)
     rightCollapsed.value = Boolean(saved.rightCollapsed)
-    conversationMode.value = saved.conversationMode === 'branch' ? 'branch' : 'chat'
     const allIds = new Set<string>()
     const gather = (items: Section[]) => items.forEach(item => { allIds.add(item.id); gather(item.children ?? []) })
     gather(sections.value)
@@ -1048,7 +1062,8 @@ function restoreRightPanel() {
   saveViewSoon()
 }
 
-watch([activeBlockId, expandedSections, leftCollapsed, rightCollapsed, conversationMode], saveViewSoon, { deep: true })
+watch([readerMode, () => article.value?.revision], () => { annotationTool.value = 'pointer'; highlightedAnnotationId.value = ''; closeAnnotationMenu() })
+watch([activeBlockId, expandedSections, leftCollapsed, rightCollapsed], saveViewSoon, { deep: true })
 watch([activeExploreNodeId, expandedExploreNodes, selectedAnchor], saveExploreViewSoon, { deep: true })
 onMounted(async () => {
   window.addEventListener('keydown', onKeydown)
@@ -1175,9 +1190,10 @@ onUnmounted(() => {
             <div v-if="article?.status === 'generating'" class="article-status" role="status">{{ article.progressMessage || '正在整理文档' }} · {{ article.progress }}%</div>
             <div v-else-if="article?.status === 'failed'" class="article-status" role="alert">{{ article.errorMessage || '学习文章生成失败。' }}</div>
             <div v-else-if="article?.status === 'stale'" class="article-status">原文结构已调整，文章可能过时，请重新生成。</div>
-            <div v-if="!article || article.status !== 'ready'" class="article-status">点击“生成学习文章”，将整份课件按知识主题整理为中文文章；英文内容会翻译讲解，并尽可能附上原图和出处。原文可随时切换查看。</div>
+            <div v-if="!article || article.status !== 'ready'" class="article-status">点击“生成学习文章”，将整份课件按知识主题整理为中文文章；英文内容会翻译讲解，只选用与文章段落相关的原图，并保留出处。原文可随时切换查看。</div>
             <button class="secondary-button" :disabled="articleStarting || article?.status === 'generating'" @click="generateArticle">{{ articleStarting ? '正在开始…' : article?.sections.length ? '重新生成文章' : '生成学习文章' }}</button>
             <LearningArticleSection v-for="section in article?.status === 'ready' ? article.sections : []" :key="section.id" :section="section" @cite="jumpToSource" />
+            <AnnotationLayer v-if="article?.status === 'ready'" :key="`article-${article.revision}`" ref="annotationLayer" :document-id="activeDocument.id" :version-id="activeDocument.activeVersionId || ''" surface="article" :article-revision="article.revision" :blocks="articleBlocks" :tool="annotationTool" :highlight-annotation-id="highlightedAnnotationId" @selected="onAnnotationSelection" @notice="notify" @error="notify" />
           </article>
           <article v-else class="reading-card">
             <header class="document-intro">
@@ -1225,23 +1241,23 @@ onUnmounted(() => {
       </main>
 
       <aside class="explore-column" :class="{ 'drawer-open': rightDrawerOpen }" aria-label="文档对话">
-        <ConversationPanel :nodes="exploreNodes" :edges="exploreEdges" :terms="terms" :chats="chats" :chat-id="exploreChatId" :active-node-id="activeExploreNodeId" :expanded-node-ids="[...expandedExploreNodes]" :mode="conversationMode" :document-title="activeDocument?.title || activeDocument?.name || ''" :pending-question="pendingQuestion" :busy="exploreBusy" :loading="exploreLoading" :error="exploreError" @activate="activateExploreNode" @toggle="toggleExploreNode" @delete-branch="deleteExploreBranch" @reply="prepareReply" @mode="setConversationMode" @new-chat="newConversation" @switch-chat="switchConversation" @cite="jumpToSource" @close="rightDrawerOpen = false" @term="openTermFromCard">
+        <ConversationPanel :nodes="exploreNodes" :edges="exploreEdges" :terms="terms" :chats="chats" :chat-id="exploreChatId" :active-node-id="activeExploreNodeId" :expanded-node-ids="[...expandedExploreNodes]" :document-title="activeDocument?.title || activeDocument?.name || ''" :pending-question="pendingQuestion" :busy="exploreBusy" :loading="exploreLoading" :error="exploreError" @activate="activateExploreNode" @toggle="toggleExploreNode" @delete-branch="deleteExploreBranch" @reply="prepareReply" @new-chat="newConversation" @switch-chat="switchConversation" @cite="jumpToSource" @article="jumpToArticleSelection" @close="rightDrawerOpen = false" @term="openTermFromCard">
           <template #composer>
             <form class="chat-composer" aria-label="发送消息" :aria-busy="exploreBusy" @submit.prevent="askDocument">
               <div v-if="pendingReply" class="composer-reply-context"><span>{{ replyLabel }} · {{ replyTitle }}</span><button type="button" class="icon-button tiny" aria-label="取消指定回复" @click="pendingReply = null"><X :size="13" /></button></div>
-              <div v-if="annotationTool !== 'pointer'" class="composer-tool-status" role="status"><Pencil :size="13" /><span>{{ activeToolLabel }}已启用 · 在正文标注</span><button type="button" class="icon-button tiny" aria-label="结束标注，返回指针" @click="selectAnnotationTool('pointer')"><X :size="13" /></button></div>
+              <div v-if="annotationTool !== 'pointer'" class="composer-tool-status" role="status"><Pencil :size="13" /><span>{{ activeToolLabel }}已启用 · {{ readerMode === 'article' ? '在学习文章标注' : '在原文标注' }}</span><button type="button" class="icon-button tiny" aria-label="结束标注，返回指针" @click="selectAnnotationTool('pointer')"><X :size="13" /></button></div>
               <div class="composer-box" :class="{ 'has-error': documentQuestionError }">
                 <label for="document-question" class="visually-hidden">向当前文档提问</label>
-                <textarea id="document-question" ref="composerInput" v-model="documentQuestion" rows="3" :disabled="!activeDocument || !exploreChatId || readerLoading || exploreLoading || exploreBusy" :aria-describedby="documentQuestionError ? 'document-question-help document-question-error' : 'document-question-help'" :aria-invalid="Boolean(documentQuestionError)" :placeholder="activeDocument ? '问问这份文档…' : '先打开一份文档'" @input="documentQuestionError = ''" @keydown="onComposerKeydown"></textarea>
+                <textarea id="document-question" ref="composerInput" v-model="documentQuestion" rows="3" :disabled="!activeDocument || !exploreChatId || readerLoading || exploreLoading || exploreBusy" :aria-describedby="documentQuestionError ? 'document-question-help document-question-error' : 'document-question-help'" :aria-invalid="Boolean(documentQuestionError)" :placeholder="activeDocument ? '' : '先打开一份文档'" @input="documentQuestionError = ''" @keydown="onComposerKeydown"></textarea>
                 <div class="composer-footer">
                   <details ref="composerMenu" class="composer-menu" @keydown.esc.stop="composerMenu && (composerMenu.open = false)">
                     <summary class="icon-button" aria-label="添加文件或标注工具" title="添加文件或标注工具"><Plus :size="20" /></summary>
                     <div class="composer-menu-popover" role="group" aria-label="文件与标注工具">
                       <button type="button" :disabled="importing || reparsing" @click="addFileFromComposer"><FilePlus2 :size="16" /><span>添加文件<small>导入本地文档库并切换阅读</small></span></button>
                       <div class="composer-menu-divider"></div>
-                      <span class="composer-menu-label">正文标注</span>
-                      <button v-for="tool in annotationTools" :key="tool.value" type="button" :class="{ selected: annotationTool === tool.value }" :aria-pressed="annotationTool === tool.value" :disabled="!activeDocument || readerLoading" @click="selectAnnotationTool(tool.value)"><component :is="tool.icon" :size="16" /><span>{{ tool.label }}<small>{{ tool.description }}</small></span></button>
-                      <button type="button" :disabled="!activeDocument || readerLoading" @click="composerMenu && (composerMenu.open = false); clearDocumentAnnotations()"><Trash2 :size="16" /><span>清除标注</span></button>
+                      <span class="composer-menu-label">{{ readerMode === 'article' ? '学习文章标注' : '原文标注' }}</span>
+                      <button v-for="tool in annotationTools" :key="tool.value" type="button" :class="{ selected: annotationTool === tool.value }" :aria-pressed="annotationTool === tool.value" :disabled="!canAnnotate" @click="selectAnnotationTool(tool.value)"><component :is="tool.icon" :size="16" /><span>{{ tool.label }}<small>{{ tool.description }}</small></span></button>
+                      <button type="button" :disabled="!canAnnotate" @click="composerMenu && (composerMenu.open = false); clearDocumentAnnotations()"><Trash2 :size="16" /><span>清除标注</span></button>
                     </div>
                   </details>
                   <button type="button" class="composer-model" :title="modelLabel" @click="providerSettingsOpen = true"><span>{{ modelLabel }}</span><ChevronDown :size="12" /></button>
@@ -1257,7 +1273,7 @@ onUnmounted(() => {
     </div>
 
     <section v-if="annotationSelection" class="annotation-selection-menu" :style="annotationMenuStyle" aria-label="圈选内容操作">
-      <header class="annotation-menu-heading"><div><strong>已圈选 {{ annotationSelection.blockIds.length }} 个内容块</strong><small>{{ annotationSelection.imageRefs.length ? '包含图片区域' : '原文上下文已完整提取' }}</small></div><button class="icon-button tiny" aria-label="关闭圈选菜单" @click="closeAnnotationMenu"><X :size="15" /></button></header>
+      <header class="annotation-menu-heading"><div><strong>已圈选 {{ annotationSelection.blockIds.length }} 个内容块</strong><small>{{ annotationSelection.imageRefs.length ? '包含图片区域' : annotationSelection.surface === 'article' ? '已关联文章段落与原文出处' : '已提取原文上下文' }}</small></div><button class="icon-button tiny" aria-label="关闭圈选菜单" @click="closeAnnotationMenu"><X :size="15" /></button></header>
       <p class="annotation-selection-excerpt">{{ annotationSelection.selectedText || '图片区域已绑定到本地原文，可由支持视觉的模型分析。' }}</p>
       <div class="annotation-menu-actions">
         <button class="annotation-action-primary" :disabled="exploreBusy" @click="submitAnnotationQuestion('explain')">解释这段</button>

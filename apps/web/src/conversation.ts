@@ -1,6 +1,5 @@
 import type { ExploreEdge, ExploreNode } from './platform'
 
-export type ConversationMode = 'chat' | 'branch'
 export type ReplyKind = 'deepens' | 'related' | 'branch'
 export const nodeId = (node: ExploreNode) => node.nodeId || node.id
 export const isConversation = (node: ExploreNode) => node.kind !== 'note'

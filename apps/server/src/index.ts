@@ -355,12 +355,14 @@ export function createServer(options: ServerOptions = {}) {
   }));
   app.get("/api/documents/:id/terms", asyncRoute(async (req, res) => res.json(await core.terms.list(req.params.id))));
   app.get("/api/documents/:id/annotations", asyncRoute(async (req, res) => {
-    res.json(core.annotations.list(z.string().min(1).max(128).parse(req.params.id)));
+    const scope = z.object({ surface: z.enum(['source', 'article']).optional(), articleRevision: z.string().max(128).optional() }).strict().parse(req.query);
+    res.json(core.annotations.list(z.string().min(1).max(128).parse(req.params.id), scope));
   }));
   app.post("/api/annotations", asyncRoute(async (req, res) => {
     const point = z.object({ x: z.number().finite().min(0).max(1), y: z.number().finite().min(0).max(1) }).strict();
     const body = z.object({
       documentId: z.string().min(1).max(128), tool: z.enum(["pen", "highlighter", "lasso"]),
+      surface: z.enum(['source', 'article']).optional(), articleRevision: z.string().max(128).optional(),
       targets: z.array(z.object({ blockId: z.string().min(1).max(128), shape: z.enum(["path", "polygon"]), points: z.array(point).min(2).max(10000), strokeRatio: z.number().finite().gt(0).max(0.05) }).strict()).min(1).max(500),
     }).strict().parse(req.body);
     res.status(201).json(core.annotations.create(body));
@@ -370,7 +372,8 @@ export function createServer(options: ServerOptions = {}) {
     res.status(204).end();
   }));
   app.delete("/api/documents/:id/annotations", asyncRoute(async (req, res) => {
-    core.annotations.clear(z.string().min(1).max(128).parse(req.params.id));
+    const scope = z.object({ surface: z.enum(['source', 'article']).optional(), articleRevision: z.string().max(128).optional() }).strict().parse(req.query);
+    core.annotations.clear(z.string().min(1).max(128).parse(req.params.id), scope);
     res.status(204).end();
   }));
   const serveAsset = asyncRoute(async (req, res) => {
@@ -461,7 +464,7 @@ export function createServer(options: ServerOptions = {}) {
     res.json(await core.chat.ask({ ...body, chatId: req.params.chatId, anchor: body.anchor || (body.sourceBlockId ? { blockId: body.sourceBlockId } : undefined) }));
   }));
   app.post("/api/ask", asyncRoute(async (req, res) => {
-    const body = z.object({ documentId: z.string().min(1), question: z.string().min(1).max(10000), chatId: z.string().optional(), nodeId: z.string().optional(), parentNodeId: z.string().optional(), contextNodeId: z.string().optional(), selectedText: z.string().max(60000).optional(), context: z.record(z.string(), z.unknown()).optional(), images: z.array(z.object({ blockId: z.string().min(1).max(128), assetId: z.string().min(1).max(128) }).strict()).max(4).optional(), mode: z.enum(["local", "global", "deepen", "branch", "related"]).optional(), branchKind: z.enum(["deepens", "branch", "related"]).optional(), anchor: z.object({ blockId: z.string().min(1), startOffset: z.number().int().nonnegative().optional(), endOffset: z.number().int().nonnegative().optional() }).optional(), sourceBlockId: z.string().optional(), sourceVersionId: z.string().optional(), startOffset: z.number().int().nonnegative().optional(), endOffset: z.number().int().nonnegative().optional() }).strict().parse(req.body);
+    const body = z.object({ documentId: z.string().min(1), question: z.string().min(1).max(10000), chatId: z.string().optional(), nodeId: z.string().optional(), parentNodeId: z.string().optional(), contextNodeId: z.string().optional(), selectedText: z.string().max(60000).optional(), articleSelection: z.object({ revision: z.string().min(1).max(128), targetIds: z.array(z.string().min(1).max(128)).min(1).max(500), annotationId: z.string().min(1).max(128).optional() }).strict().optional(), context: z.record(z.string(), z.unknown()).optional(), images: z.array(z.object({ blockId: z.string().min(1).max(128), assetId: z.string().min(1).max(128) }).strict()).max(4).optional(), mode: z.enum(["local", "global", "deepen", "branch", "related"]).optional(), branchKind: z.enum(["deepens", "branch", "related"]).optional(), anchor: z.object({ blockId: z.string().min(1), startOffset: z.number().int().nonnegative().optional(), endOffset: z.number().int().nonnegative().optional() }).optional(), sourceBlockId: z.string().optional(), sourceVersionId: z.string().optional(), startOffset: z.number().int().nonnegative().optional(), endOffset: z.number().int().nonnegative().optional() }).strict().parse(req.body);
     const { mode, branchKind, sourceBlockId, sourceVersionId, startOffset, endOffset, nodeId: _nodeId, contextNodeId: _contextNodeId, ...rest } = body;
     const edgeKind = branchKind || (mode === "deepen" ? "deepens" : mode === "branch" || mode === "related" ? mode : undefined);
     const answer = await core.chat.ask({ ...rest, anchor: body.anchor || (sourceBlockId ? { blockId: sourceBlockId, startOffset, endOffset } : undefined), branchKind: edgeKind });

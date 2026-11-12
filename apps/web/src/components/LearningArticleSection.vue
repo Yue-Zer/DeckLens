@@ -24,17 +24,17 @@ function displayParagraphs(text: string): string[] {
 <template>
   <section :id="`article-section-${section.id}`" class="article-section">
     <component :is="section.depth > 0 ? 'h3' : 'h2'" class="section-heading">{{ section.title }}</component>
-    <figure v-for="figure in section.figures.filter(item => !item.afterParagraphId)" :key="figure.id" class="reader-image">
+    <figure v-for="figure in section.figures.filter(item => !item.afterParagraphId)" :id="`article-target-${figure.id}`" :data-block-id="figure.id" :key="figure.id" class="reader-image content-block">
       <img :src="api.getAssetUrl(figure.assetId)" :alt="figure.caption || '课件原图'" loading="lazy" />
       <figcaption>{{ figure.caption ? `原文图注：${figure.caption}` : '课件原图' }} · <button class="article-source" @click="emit('cite', figure.blockId)">{{ location(figure.locator) }}</button></figcaption>
     </figure>
     <template v-for="paragraph in section.paragraphs" :key="paragraph.id">
-      <p v-for="(part, index) in displayParagraphs(paragraph.text)" :key="index" class="reader-paragraph">{{ part }}</p>
+      <div :id="`article-target-${paragraph.id}`" :data-block-id="paragraph.id" class="content-block article-paragraph"><p v-for="(part, index) in displayParagraphs(paragraph.text)" :key="index" class="reader-paragraph">{{ part }}</p></div>
       <details v-if="paragraph.sources.length" class="article-sources">
         <summary>查看参考原文（{{ paragraph.sources.length }}）</summary>
         <ul><li v-for="source in paragraph.sources" :key="source.blockId"><button class="article-source" @click="emit('cite', source.blockId)"><strong>{{ location(source.locator) }}</strong><span>{{ source.quote || '定位到原文内容' }}</span></button></li></ul>
       </details>
-      <figure v-for="figure in section.figures.filter(item => item.afterParagraphId === paragraph.id)" :key="figure.id" class="reader-image">
+      <figure v-for="figure in section.figures.filter(item => item.afterParagraphId === paragraph.id)" :id="`article-target-${figure.id}`" :data-block-id="figure.id" :key="figure.id" class="reader-image content-block">
         <img :src="api.getAssetUrl(figure.assetId)" :alt="figure.caption || '课件原图'" loading="lazy" />
         <figcaption>{{ figure.caption ? `原文图注：${figure.caption}` : '课件原图' }} · <button class="article-source" @click="emit('cite', figure.blockId)">{{ location(figure.locator) }}</button></figcaption>
       </figure>

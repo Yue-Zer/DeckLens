@@ -18,7 +18,7 @@ test('folder migration preserves documents and folder membership survives repars
 
     // Recreate the pre-folder schema on this isolated database, retaining existing documents.
     const oldDb = new DatabaseSync(join(dir, 'db', 'decklens.sqlite'));
-    oldDb.exec('DROP TABLE file_folder_memberships; DROP TABLE file_folders; DELETE FROM schema_migrations WHERE version = (SELECT MAX(version) FROM schema_migrations)');
+    oldDb.exec('DROP TABLE article_annotation_targets; DROP TABLE article_annotations; DROP TABLE file_folder_memberships; DROP TABLE file_folders; DELETE FROM schema_migrations WHERE version >= 6');
     oldDb.close();
     core = createCore(dir);
     assert.equal(core.documents.tree(id).document.id, id);

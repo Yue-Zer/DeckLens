@@ -4,9 +4,9 @@ import type { SqliteDatabase } from "./sqlite.js";
 import type { BlockRecord, DocumentRecord, DocumentTree, SectionRecord } from "./types.js";
 
 type Row = Record<string, unknown>;
-type SourceBlock = { id: string; sectionId: string; type: string; text: string; sourceOrder: number; locator: BlockRecord["sourceLocator"]; assetId?: string; mimeType?: string; caption: string };
+type SourceBlock = { id: string; sectionId: string; type: string; text: string; sourceOrder: number; locator: BlockRecord["sourceLocator"]; assetId?: string; mimeType?: string; caption: string; width?: number; height?: number; imageHash?: string };
 type DraftParagraph = { text: string; sourceBlockIds: string[] };
-type DraftSection = { sourceId?: string; sourceBlockIds?: string[]; id: string; parentId?: string; title: string; depth: number; order: number; paragraphs: DraftParagraph[]; children: DraftSection[] };
+type DraftSection = { sourceId?: string; sourceBlockIds?: string[]; id: string; parentId?: string; title: string; depth: number; order: number; paragraphs: DraftParagraph[]; children: DraftSection[]; figures?: Array<{ blockId: string; paragraphIndex: number }> };
 
 const CHUNK_CHARS = 11_000;
 const MERGE_CHARS = 9_000;
@@ -31,14 +31,16 @@ export function createLearningArticleService(dependencies: {
       const asset = payload.asset && typeof payload.asset === "object" ? payload.asset as Record<string, unknown> : {};
       const assetId = stringValue(payload.assetId ?? asset.id);
       const caption = stringValue(payload.caption ?? payload.alt ?? block.text);
+      const image = assetId ? sql('SELECT width,height,sha256 FROM assets WHERE asset_id=?').get(assetId) as Row | undefined : undefined;
       return {
         id: block.id, sectionId: block.sectionId, type: block.type,
         text: sourceText(block), sourceOrder: block.sourceOrder, locator: block.sourceLocator,
         assetId, mimeType: stringValue(asset.mimeType), caption,
+        width: Number(payload.width ?? image?.width) || undefined, height: Number(payload.height ?? image?.height) || undefined, imageHash: stringValue(image?.sha256),
       };
     });
     const structureHash = createHash("sha256").update(JSON.stringify({
-      articleAlgorithm: 3,
+      articleAlgorithm: 4,
       versionId: tree.versionId,
       sections: flattenSections(tree.sections).map(section => [section.id, section.parentId ?? "", section.title, section.depth, section.displayOrder]),
       blocks: parts.map(block => [block.id, block.sectionId, block.sourceOrder, block.type, block.text, block.assetId ?? ""]),
@@ -165,6 +167,40 @@ export function createLearningArticleService(dependencies: {
           text: paragraph.text.trim().slice(0, 12000),
           sourceBlockIds: [...new Set(paragraph.sourceBlockIds)].filter(id => hasBlock.has(id)),
         })).filter(paragraph => paragraph.text && paragraph.sourceBlockIds.length);
+      }
+
+      // Images are optional evidence for a particular paragraph, not a page inventory.
+      const usedImages = new Set<string>();
+      for (const section of flattenDraftSections(sourceRoots)) {
+        const candidates = figureCandidates(section, blocks).filter(block => !usedImages.has(block.imageHash || block.assetId!));
+        section.figures = [];
+        if (!candidates.length || !section.paragraphs.length) continue;
+        setProgress(88, `正在为文章筛选相关配图：${section.title}`);
+        for (let offset = 0; offset < candidates.length; offset += 20) {
+          if (section.figures.length >= Math.min(3, section.paragraphs.length)) break;
+          const batch = candidates.slice(offset, offset + 20);
+          try {
+            const input = { paragraphs: section.paragraphs.map((paragraph, index) => ({ index, ...paragraph })), images: batch.map(image => ({ id: image.id, caption: image.caption, width: image.width, height: image.height, context: nearbyText(image, blocks).map(block => ({ id: block.id, text: block.text.slice(0, 500) })) })) };
+            const response = await dependencies.complete({ profileId: provider.id, messages: [
+              { role: 'system', content: '你是学习文章配图编辑。仅选择直接解释某段文章中的概念、过程、数据或例子的原图，并将它放在对应段落之后。不能因为同一页或同一章节就选图；排除页眉页脚、校徽、装饰、广告、孤立单词、箭头和拆开的图形碎片。根据图注和附近原文判断；缺少可靠相关证据时不选图，允许全部不选。不要为凑图而添加内容，不生成新图片。只返回 JSON：{"figures":[{"imageBlockId":"输入图片ID","paragraphIndex":0,"reason":"图片具体解释本段的什么内容"}]}。每张图最多一次，每段最多一张，整个章节最多三张，reason 必须说明具体关联。' },
+              { role: 'user', content: `文章配图候选：${JSON.stringify(input)}` },
+            ] });
+            const json = response.trim().replace(/^```(?:json)?\s*/i, '').replace(/\s*```$/, '');
+            const parsed = JSON.parse(json.slice(json.indexOf('{'), json.lastIndexOf('}') + 1)) as Row;
+            for (const value of Array.isArray(parsed.figures) ? parsed.figures : []) {
+              const choice = value as Row;
+              const image = batch.find(item => item.id === choice.imageBlockId);
+              const index = typeof choice.paragraphIndex === 'number' ? choice.paragraphIndex : -1;
+              const paragraph = section.paragraphs[index];
+              if (!image || !Number.isInteger(index) || !paragraph || stringValue(choice.reason).trim().length < 8) continue;
+              if (!nearbyText(image, blocks).some(block => paragraph.sourceBlockIds.includes(block.id))) continue;
+              const key = image.imageHash || image.assetId!;
+              if (usedImages.has(key) || section.figures.some(item => item.paragraphIndex === index) || section.figures.length >= Math.min(3, section.paragraphs.length)) continue;
+              section.figures.push({ blockId: image.id, paragraphIndex: index });
+              usedImages.add(key);
+            }
+          } catch { /* Optional illustration selection must never lose the article's text. */ }
+        }
       }
 
       if (dependencies.getDocument(documentId).activeVersionId !== tree.versionId) {
@@ -389,6 +425,33 @@ function flattenDraftSections(sections: DraftSection[]): DraftSection[] {
   return output;
 }
 
+function nearbyText(image: SourceBlock, blocks: SourceBlock[]) {
+  const page = image.locator.slideNumber ?? image.locator.pageNumber;
+  return blocks.filter(block => block.type !== 'image' && block.text.trim() && (page
+    ? (block.locator.slideNumber ?? block.locator.pageNumber) === page
+    : block.sectionId === image.sectionId && Math.abs(block.sourceOrder - image.sourceOrder) <= 4));
+}
+function figureCandidates(section: DraftSection, blocks: SourceBlock[]) {
+  const images = blocks.filter(block => block.type === 'image' && block.assetId && block.mimeType);
+  return images.filter(image => {
+    if (!(section.sourceBlockIds ? section.sourceBlockIds.includes(image.id) : image.sectionId === section.sourceId)) return false;
+    const caption = image.caption.trim();
+    if (/logo|copyright|visit us|watermark|校徽|页眉|页脚|装饰|箭头|^arrow$/i.test(caption)) return false;
+    const duplicates = images.filter(other => image.imageHash && other.imageHash === image.imageHash);
+    if (new Set(duplicates.map(other => other.locator.pageNumber ?? other.locator.slideNumber ?? other.sectionId)).size >= 3) return false;
+    const { width, height } = image;
+    if (width && height && (Math.min(width, height) < 80 || width * height < 16000 || width / height > 6 || height / width > 6)) return false;
+    const descriptive = caption.length >= 4 && !/^(?:image|picture|figure|diagram|示意图|图片|课件原图|图)[\s\d._-]*$/i.test(caption);
+    if (!descriptive) {
+      const page = image.locator.pageNumber ?? image.locator.slideNumber;
+      const siblings = images.filter(other => page ? (other.locator.pageNumber ?? other.locator.slideNumber) === page : other.sectionId === image.sectionId);
+      if (!width || !height || width * height < 60000 || siblings.length >= 4) return false;
+      if (!nearbyText(image, blocks).some(block => /图\s*\d|示意图|流程图|结构图|figure\s*\d|diagram|chart|plot/i.test(block.text))) return false;
+    }
+    return true;
+  });
+}
+
 function persistArticle(db: SqliteDatabase, input: {
   articleId: string; documentId: string; versionId: string; documentTitle: string; language: string;
   provider: string; model: string; structureHash: string; draftTree: DraftSection[]; blocks: SourceBlock[];
@@ -429,13 +492,11 @@ function persistArticle(db: SqliteDatabase, input: {
       VALUES(?,?,?,?,?,?,?,?)`);
     for (const section of allSections) {
       const articleSectionId = sectionIds.get(section.id)!;
-      const sectionBlocks = input.blocks.filter(block => (section.sourceBlockIds ? section.sourceBlockIds.includes(block.id) : block.sectionId === section.sourceId) && block.type === "image" && block.assetId && block.mimeType);
-      for (const figure of sectionBlocks) {
-        const preceding = section.paragraphs.map((paragraph, index) => ({
-          paragraphId: paragraphIds.get(`${section.id}:${index}`),
-          sourceOrder: Math.max(...paragraph.sourceBlockIds.map(id => blocksById.get(id)?.sourceOrder ?? -1)),
-        })).filter(item => item.paragraphId && item.sourceOrder <= figure.sourceOrder).sort((a, b) => b.sourceOrder - a.sourceOrder)[0];
-        insertFigure.run(randomUUID(), articleSectionId, input.versionId, figure.id, figure.assetId, preceding?.paragraphId ?? null, figure.sourceOrder, figure.caption);
+      for (const selection of section.figures ?? []) {
+        const figure = blocksById.get(selection.blockId)!;
+        const paragraphId = paragraphIds.get(`${section.id}:${selection.paragraphIndex}`);
+        if (!paragraphId) continue;
+        insertFigure.run(randomUUID(), articleSectionId, input.versionId, figure.id, figure.assetId, paragraphId, figure.sourceOrder, figure.caption);
       }
     }
     db.prepare("UPDATE learning_articles SET title=?,language=?,source_structure_hash=?,provider=?,model=?,created_at=COALESCE(created_at,?) WHERE article_id=?")
@@ -482,7 +543,7 @@ function mapArticle(db: SqliteDatabase, row: Row, currentStructureHash: string):
   }
   const structureChanged = row.source_structure_hash !== currentStructureHash;
   return {
-    id: articleId, documentId: String(row.document_id), documentVersionId: String(row.version_id), title: String(row.title), language: String(row.language),
+    id: articleId, revision: createHash('sha256').update(JSON.stringify({ paragraphs: paragraphRows.map(item => [item.paragraph_id, item.paragraph_text]), figures: figureRows.map(item => item.figure_id) })).digest('hex'), documentId: String(row.document_id), documentVersionId: String(row.version_id), title: String(row.title), language: String(row.language),
     status: structureChanged && row.status === "ready" ? "stale" : row.status as LearningArticle["status"], progress: Number(row.progress),
     progressMessage: stringValue(row.progress_message) || undefined, errorMessage: stringValue(row.error_message) || undefined,
     provider: stringValue(row.provider) || undefined, model: stringValue(row.model) || undefined,

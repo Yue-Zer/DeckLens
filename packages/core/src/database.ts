@@ -434,7 +434,26 @@ const migrations = [
     document_id TEXT PRIMARY KEY REFERENCES documents(document_id) ON DELETE CASCADE,
     folder_id TEXT NOT NULL REFERENCES file_folders(folder_id) ON DELETE RESTRICT
   );
-  CREATE INDEX file_folder_memberships_folder_idx ON file_folder_memberships(folder_id);`
+  CREATE INDEX file_folder_memberships_folder_idx ON file_folder_memberships(folder_id);`,
+  `CREATE TABLE article_annotations (
+    annotation_id TEXT PRIMARY KEY,
+    document_id TEXT NOT NULL REFERENCES documents(document_id) ON DELETE CASCADE,
+    version_id TEXT NOT NULL REFERENCES document_versions(version_id) ON DELETE CASCADE,
+    article_id TEXT NOT NULL REFERENCES learning_articles(article_id) ON DELETE CASCADE,
+    article_revision TEXT NOT NULL,
+    tool TEXT NOT NULL CHECK(tool IN ('pen','highlighter','lasso')),
+    created_at TEXT NOT NULL
+  );
+  CREATE INDEX article_annotations_scope_idx ON article_annotations(document_id,version_id,article_revision);
+  CREATE TABLE article_annotation_targets (
+    annotation_id TEXT NOT NULL REFERENCES article_annotations(annotation_id) ON DELETE CASCADE,
+    target_order INTEGER NOT NULL,
+    target_id TEXT NOT NULL,
+    shape TEXT NOT NULL CHECK(shape IN ('path','polygon')),
+    points_json TEXT NOT NULL,
+    stroke_ratio REAL NOT NULL,
+    PRIMARY KEY(annotation_id,target_order)
+  );`
 ];
 
 export function openDatabase(dataDir: string): SqliteDatabase {

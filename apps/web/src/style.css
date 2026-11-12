@@ -414,11 +414,6 @@ summary::-webkit-details-marker { display: none; }
 .conversation-history-menu label { display: grid; min-width: 0; gap: var(--space-2); color: var(--muted); font-size: var(--text-xs); }
 .conversation-history-menu select { width: 100%; min-width: 0; height: 36px; padding: 0 var(--space-2); border: 1px solid var(--line); border-radius: var(--radius-sm); color: var(--ink); background: var(--surface); font-size: var(--text-sm); }
 .conversation-history-menu p { margin: 0; color: var(--muted); font-size: var(--text-xs); line-height: 1.6; }
-.conversation-mode { display: flex; flex: none; align-items: center; gap: var(--space-4); padding: 0 var(--space-5) var(--space-3); }
-.conversation-mode button { display: inline-flex; min-height: 32px; align-items: center; gap: var(--space-2); padding: var(--space-1) 0; border: 0; border-bottom: 2px solid transparent; color: var(--muted); background: transparent; cursor: pointer; font-size: var(--text-xs); }
-.conversation-mode button:hover { color: var(--ink); }
-.conversation-mode button.selected { border-bottom-color: var(--ink); color: var(--ink); font-weight: 650; }
-.conversation-mode button:disabled { cursor: not-allowed; color: var(--quiet); }
 .conversation-trail { display: flex; min-height: 32px; flex: none; align-items: center; gap: var(--space-1); overflow-x: auto; padding: 0 var(--space-5) var(--space-2); color: var(--quiet); font-size: var(--text-xs); }
 .conversation-trail > svg { flex: none; }
 .conversation-trail button { max-width: 144px; flex: none; overflow: hidden; padding: var(--space-1); border: 0; border-radius: var(--radius-sm); color: var(--muted); text-overflow: ellipsis; white-space: nowrap; background: transparent; cursor: pointer; font-size: inherit; }
@@ -484,7 +479,7 @@ summary::-webkit-details-marker { display: none; }
 @media (max-width: 1199px) { .conversation-close { display: inline-grid; } }
 @media (max-width: 767px) {
   .conversation-header { padding-inline: var(--space-4); }
-  .conversation-mode, .conversation-trail { padding-inline: var(--space-4); }
+  .conversation-trail { padding-inline: var(--space-4); }
   .conversation-messages { padding-inline: var(--space-4); }
   .chat-composer { padding-inline: var(--space-3); }
 }

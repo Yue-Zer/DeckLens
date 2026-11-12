@@ -5,6 +5,8 @@ import { dirname, extname, isAbsolute, join, relative, resolve, sep } from "node
 import { randomUUID, createHash } from "node:crypto";
 import { openDatabase } from "./database.js";
 import { createLearningArticleService } from "./learning-articles.js";
+import { createArticleAnnotations } from "./article-annotations.js";
+import type { AnnotationScope } from '@decklens/contracts';
 import { completeWithProvider, streamWithProvider, testProvider } from "./providers.js";
 import { detectFormat, parseDocument, sha256, type ParsedBlock, type ParsedDocument, type ParsedSection, type ProgressCallback } from "./parsers.js";
 import type {
@@ -222,8 +224,10 @@ export function createCore(dataDir: string, options: CreateCoreOptions = {}) {
     }
   };
 
+  const articleAnnotations = createArticleAnnotations(db, id => learningArticles.get(id));
   const annotations = {
-    list(documentId: string): AnnotationRecord[] {
+    list(documentId: string, scope: AnnotationScope = {}): AnnotationRecord[] {
+      if (scope.surface === 'article') return articleAnnotations.list(documentId, scope.articleRevision);
       const document = getDocument(db, documentId);
       const rows = prepare(db, "SELECT * FROM annotations WHERE document_id=? AND version_id=? ORDER BY created_at,annotation_id").all(documentId, document.activeVersionId) as DbRow[];
       return rows.map(row => ({
@@ -234,6 +238,7 @@ export function createCore(dataDir: string, options: CreateCoreOptions = {}) {
       }));
     },
     create(input: CreateAnnotationInput): AnnotationRecord {
+      if (input.surface === 'article') return articleAnnotations.create(input);
       const document = getDocument(db, input.documentId);
       if (!Array.isArray(input.targets) || input.targets.length < 1 || input.targets.length > 500) throw coreError("INVALID_ANNOTATION", "标注必须包含 1 到 500 个有效区域。");
       if (!(input.tool === "pen" || input.tool === "highlighter" || input.tool === "lasso")) throw coreError("INVALID_ANNOTATION", "不支持的标注工具。");
@@ -257,10 +262,12 @@ export function createCore(dataDir: string, options: CreateCoreOptions = {}) {
       return { id, documentId: document.id, versionId: document.activeVersionId, tool: input.tool, targets, createdAt };
     },
     delete(annotationId: string): void {
+      if (articleAnnotations.delete(annotationId)) return;
       const result = prepare(db, "DELETE FROM annotations WHERE annotation_id=?").run(annotationId);
       if (!result.changes) throw coreError("ANNOTATION_NOT_FOUND", "找不到这条标注。");
     },
-    clear(documentId: string): void {
+    clear(documentId: string, scope: AnnotationScope = {}): void {
+      if (scope.surface === 'article') { articleAnnotations.clear(documentId, scope.articleRevision ?? ''); return; }
       const document = getDocument(db, documentId);
       prepare(db, "DELETE FROM annotations WHERE document_id=? AND version_id=?").run(documentId, document.activeVersionId);
     },
@@ -329,6 +336,24 @@ export function createCore(dataDir: string, options: CreateCoreOptions = {}) {
     },
     async ask(request: AskRequest): Promise<AskResult> {
       const doc = getDocument(db, request.documentId);
+      let articleSourceIds: string[] = [];
+      if (request.articleSelection) {
+        const selection = request.articleSelection;
+        const { article, targets } = articleAnnotations.resolve(doc.id, selection.revision, selection.targetIds);
+        const annotation = selection.annotationId ? articleAnnotations.list(doc.id, selection.revision).find(item => item.id === selection.annotationId) : undefined;
+        if (selection.annotationId && (!annotation || !selection.targetIds.every(id => annotation.targets.some(target => target.blockId === id)))) throw coreError('INVALID_ANNOTATION', '文章圈选标注与当前内容不匹配。');
+        const sourceIds = [...new Set(targets.flatMap(target => target.sourceIds))];
+        articleSourceIds = sourceIds;
+        const sourceText = sourceIds.map(id => documents.block(id).text).join('\n\n').slice(0, 30000);
+        const images = targets.flatMap(target => target.image ? [target.image] : []);
+        const imageRegions = targets.flatMap(target => {
+          if (!target.image || !selection.annotationId) return [];
+          return (annotation?.targets ?? []).filter(region => region.blockId === target.id).map(region => ({ blockId: target.image!.blockId, points: region.points }));
+        });
+        request = { ...request, selectedText: targets.map(target => target.text).join('\n\n').slice(0, 30000), anchor: sourceIds[0] ? { blockId: sourceIds[0] } : undefined,
+          images: images.slice(0, 4), context: { ...request.context, imageRegions, annotationId: selection.annotationId, selectionContext: `以下是学习文章所引用的原文，文章本身属于 AI 整理内容，不能作为原始事实：\n${sourceText}`,
+            articleSelection: { articleId: article.id, revision: article.revision, targetIds: selection.targetIds }, articleSelectedText: targets.map(target => target.text).join('\n\n').slice(0, 30000) } };
+      }
       const chatId = resolveChatId(db, doc, request.chatId, request.parentNodeId);
       const anchorBlock = request.anchor ? validateDocumentBlock(db, doc, request.anchor.blockId) : undefined;
       const anchorQuote = anchorBlock ? String(anchorBlock.plain_text).slice(request.anchor?.startOffset ?? 0, request.anchor?.endOffset ?? String(anchorBlock.plain_text).length) : request.selectedText ?? "";
@@ -353,6 +378,10 @@ export function createCore(dataDir: string, options: CreateCoreOptions = {}) {
       const contextualFollowUp = Boolean(request.parentNodeId && !request.anchor && !request.selectedText?.trim() && isContextFollowUp(request.question));
       const searchQuestion = contextualFollowUp ? "" : request.question;
       let evidence = retrieve(db, doc.activeVersionId, searchQuestion, request.selectedText, request.anchor?.blockId);
+      if (articleSourceIds.length) {
+        const selectedEvidence = articleSourceIds.slice(0, 6).flatMap(id => retrieve(db, doc.activeVersionId, '', undefined, id));
+        evidence = [...new Map([...selectedEvidence, ...evidence].map(item => [item.blockId, item])).values()].slice(0, 6);
+      }
       if (!evidence.length && contextualFollowUp && request.parentNodeId) {
         evidence = inheritParentEvidence(db, doc.id, chatId, request.parentNodeId);
       }

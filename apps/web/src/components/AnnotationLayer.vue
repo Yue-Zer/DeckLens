@@ -21,6 +21,8 @@ const props = defineProps<{
   blocks: ContentBlock[]
   tool: AnnotationTool
   highlightAnnotationId: string
+  surface?: 'source' | 'article'
+  articleRevision?: string
 }>()
 const emit = defineEmits<{
   selected: [selection: SelectionPayload]
@@ -55,7 +57,7 @@ const renderedTargets = computed(() => {
 })
 
 const livePaths = computed(() => {
-  if (props.tool === 'lasso') return lassoPoints.value.length ? pointsPath(lassoPoints.value, true) : ''
+  if (props.tool === 'lasso') return lassoPoints.value.length ? [pointsPath(lassoPoints.value, true)] : []
   return strokeSegments.value.map(segment => {
     const target = targetRect(segment.blockId)
     if (!target) return ''
@@ -223,7 +225,12 @@ function selectionText(blockIds: string[]) {
 
 async function loadAnnotations() {
   if (!props.documentId) { annotations.value = []; return }
-  try { annotations.value = await api.listAnnotations(props.documentId) }
+  const scopeKey = `${props.documentId}:${props.versionId}:${props.surface}:${props.articleRevision}`
+  try {
+    const result = await api.listAnnotations(props.documentId, { surface: props.surface ?? 'source', articleRevision: props.articleRevision })
+    if (scopeKey !== `${props.documentId}:${props.versionId}:${props.surface}:${props.articleRevision}`) return
+    annotations.value = result
+  }
   catch (error) { emit('error', error instanceof Error ? error.message : '无法读取文档标注。') }
   await nextTick()
   syncLayout()
@@ -233,7 +240,7 @@ async function saveTargets(tool: 'pen' | 'highlighter' | 'lasso', targets: Annot
   if (!targets.length || !props.documentId) return
   saving.value = true
   try {
-    const annotation = await api.createAnnotation({ documentId: props.documentId, tool, targets })
+    const annotation = await api.createAnnotation({ documentId: props.documentId, tool, targets, surface: props.surface ?? 'source', articleRevision: props.articleRevision })
     annotations.value = [...annotations.value, annotation]
     syncLayout()
     return annotation
@@ -353,13 +360,13 @@ function onPointerCancel(event: PointerEvent) {
 async function clear() {
   if (!props.documentId) return
   try {
-    await api.clearAnnotations(props.documentId)
+    await api.clearAnnotations(props.documentId, { surface: props.surface ?? 'source', articleRevision: props.articleRevision })
     annotations.value = []
-    emit('notice', '已清除当前文档的全部标注。')
+    emit('notice', props.surface === 'article' ? '已清除当前文章版本的标注。' : '已清除当前原文版本的标注。')
   } catch (error) { emit('error', error instanceof Error ? error.message : '无法清除文档标注。') }
 }
 
-watch(() => [props.documentId, props.versionId], () => { void loadAnnotations() }, { immediate: true })
+watch(() => [props.documentId, props.versionId, props.surface, props.articleRevision], () => { annotations.value = []; void loadAnnotations() }, { immediate: true })
 watch(() => props.blocks.map(block => `${block.id}:${block.sectionId}`).join('|'), async () => {
   await nextTick()
   syncLayout()

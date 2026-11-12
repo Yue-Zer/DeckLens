@@ -1,8 +1,8 @@
 <script setup lang="ts">
 import { computed, nextTick, ref, watch } from 'vue'
-import { ChevronDown, ChevronRight, CornerDownRight, FileText, GitBranch, History, MessageSquare, Plus, Settings2, Trash2, X } from '@lucide/vue'
+import { ChevronDown, ChevronRight, CornerDownRight, FileText, GitBranch, History, Plus, Trash2, X } from '@lucide/vue'
 import type { ChatSummary, ExploreEdge, ExploreNode, SourceLocator, Term } from '../api'
-import { conversationLeaves, conversationPath, nodeId, type ConversationMode, type ReplyKind } from '../conversation'
+import { conversationLeaves, conversationPath, nodeId, type ReplyKind } from '../conversation'
 
 const props = defineProps<{
   nodes: ExploreNode[]
@@ -12,7 +12,6 @@ const props = defineProps<{
   chatId: string
   activeNodeId: string
   expandedNodeIds: string[]
-  mode: ConversationMode
   documentTitle: string
   pendingQuestion: string
   busy: boolean
@@ -24,10 +23,10 @@ const emit = defineEmits<{
   toggle: [nodeId: string]
   deleteBranch: [nodeId: string]
   reply: [nodeId: string, kind: ReplyKind]
-  mode: [mode: ConversationMode]
   newChat: []
   switchChat: [chatId: string]
   cite: [blockId: string, annotationId?: string]
+  article: [node: ExploreNode]
   close: []
   term: [term: Term, parentNodeId: string]
 }>()
@@ -62,7 +61,6 @@ function selectChat(event: Event) {
   if (history.value) history.value.open = false
 }
 function reply(node: ExploreNode, kind: ReplyKind) {
-  if (props.mode === 'chat') emit('mode', 'branch')
   emit('reply', nodeId(node), kind)
 }
 function answerSegments(text: string) {
@@ -113,26 +111,23 @@ watch(() => [props.activeNodeId, props.busy, props.chatId], async () => {
         <button class="icon-button conversation-close" aria-label="关闭对话面板" @click="emit('close')"><X :size="18" /></button>
       </div>
     </header>
-    <div class="conversation-mode" role="group" aria-label="对话模式">
-      <button :aria-pressed="mode === 'chat'" :class="{ selected: mode === 'chat' }" :disabled="busy" @click="emit('mode', 'chat')"><MessageSquare :size="14" />普通对话</button>
-      <button :aria-pressed="mode === 'branch'" :class="{ selected: mode === 'branch' }" :disabled="busy" @click="emit('mode', 'branch')"><GitBranch :size="14" />分支对话</button>
-    </div>
-    <nav v-if="mode === 'branch' && trail.length" class="conversation-trail" aria-label="当前分支路径">
+    <nav v-if="leaves.length > 1 && trail.length" class="conversation-trail" aria-label="当前分支路径">
       <template v-for="(node, index) in trail" :key="nodeId(node)"><ChevronRight v-if="index" :size="12" /><button :disabled="busy" :title="node.question || node.title" :aria-current="nodeId(node) === activeNodeId ? 'step' : undefined" @click="emit('activate', nodeId(node))">{{ node.question || node.title }}</button></template>
     </nav>
-    <div ref="messages" class="conversation-messages" :class="{ 'branch-conversation': mode === 'branch' }" role="log" aria-label="对话消息" :aria-busy="busy">
+    <div ref="messages" class="conversation-messages branch-conversation" role="log" aria-label="对话消息" :aria-busy="busy">
       <div v-if="loading" class="conversation-state" role="status"><span class="loading-rule"></span><p>正在恢复对话…</p></div>
-      <article v-for="(node, index) in path" :key="nodeId(node)" class="conversation-turn" :class="{ 'has-parent': mode === 'branch' && index > 0 }" :data-conversation-node="nodeId(node)">
+      <article v-for="(node, index) in path" :key="nodeId(node)" class="conversation-turn" :class="{ 'has-parent': index > 0 }" :data-conversation-node="nodeId(node)">
         <p class="chat-user-message">{{ node.question || node.title }}</p>
         <div class="chat-assistant-message">
-          <button v-if="mode === 'branch'" class="turn-collapse" :aria-expanded="expanded.has(nodeId(node))" :aria-label="expanded.has(nodeId(node)) ? '收起这条回答' : '展开这条回答'" @click="emit('toggle', nodeId(node))"><ChevronDown v-if="expanded.has(nodeId(node))" :size="14" /><ChevronRight v-else :size="14" /><span>{{ expanded.has(nodeId(node)) ? '回答' : '回答已收起' }}</span></button>
-          <template v-if="mode === 'chat' || expanded.has(nodeId(node))">
+          <button class="turn-collapse" :aria-expanded="expanded.has(nodeId(node))" :aria-label="expanded.has(nodeId(node)) ? '收起这条回答' : '展开这条回答'" @click="emit('toggle', nodeId(node))"><ChevronDown v-if="expanded.has(nodeId(node))" :size="14" /><ChevronRight v-else :size="14" /><span>{{ expanded.has(nodeId(node)) ? '回答' : '回答已收起' }}</span></button>
+          <template v-if="expanded.has(nodeId(node))">
             <p class="chat-answer"><template v-for="(segment, segmentIndex) in answerSegments(node.answer || '该条对话尚无回答。')" :key="segmentIndex"><button v-if="segment.term" class="term-anchor chat-term" :disabled="busy" @click="emit('term', segment.term, nodeId(node))">{{ segment.text }}</button><span v-else>{{ segment.text }}</span></template></p>
             <div class="chat-answer-meta"><span>{{ originLabel(node) }}</span><span v-if="node.model" :title="`${node.provider || ''} · ${node.model}`">{{ node.model }}</span></div>
-            <button v-if="anchor(node)" class="chat-source" @click="emit('cite', anchor(node)!.blockId, annotationId(node))"><FileText :size="13" />{{ annotationId(node) ? '查看圈选原文' : sourceLabel(anchor(node)?.locator) }}<ChevronRight :size="12" /></button>
+            <button v-if="node.context?.articleSelection" class="chat-source" @click="emit('article', node)"><FileText :size="13" />查看文章圈选<ChevronRight :size="12" /></button>
+            <button v-if="anchor(node)" class="chat-source" @click="emit('cite', anchor(node)!.blockId, node.context?.articleSelection ? undefined : annotationId(node))"><FileText :size="13" />{{ annotationId(node) && !node.context?.articleSelection ? '查看圈选原文' : sourceLabel(anchor(node)?.locator) }}<ChevronRight :size="12" /></button>
             <details v-if="citations(node).length" class="chat-citations"><summary>{{ citations(node).length }} 处原文引用</summary><button v-for="(citation, citationIndex) in citations(node)" :key="`${citation.blockId}-${citationIndex}`" @click="emit('cite', citation.blockId)"><span>{{ sourceLabel(citation.locator) }}</span><q>{{ citation.quote }}</q></button></details>
             <div class="chat-turn-actions">
-              <template v-if="mode === 'branch'"><button :disabled="busy" title="沿这条回答深入" @click="reply(node, 'deepens')"><CornerDownRight :size="13" />深入</button><button :disabled="busy" title="探索相关概念" @click="reply(node, 'related')">关联</button></template>
+              <button :disabled="busy" title="沿这条回答深入" @click="reply(node, 'deepens')"><CornerDownRight :size="13" />深入</button><button :disabled="busy" title="探索相关概念" @click="reply(node, 'related')">关联</button>
               <button :disabled="busy" title="继承到这条回答为止的上下文，另开一条对话" @click="reply(node, 'branch')"><GitBranch :size="13" />从这里分支</button>
               <button class="chat-delete" :disabled="busy" aria-label="删除这条对话及后续分支" title="删除这条对话及后续分支" @click="emit('deleteBranch', nodeId(node))"><Trash2 :size="13" /></button>
             </div>

@@ -6,6 +6,79 @@ import test from 'node:test'
 import { createCore } from '../packages/core/src/index.ts'
 import { openDatabase } from '../packages/core/src/database.ts'
 import { createLearningArticleService } from '../packages/core/src/learning-articles.ts'
+import { articleContentBlocks } from '../apps/web/src/article-content.ts'
+
+test('article figures require paragraph relevance, filter fragments and remain optional on model failure', async () => {
+  const dir = await mkdtemp(join(tmpdir(), 'decklens-figures-'))
+  const core = createCore(dir)
+  const db = openDatabase(dir)
+  try {
+    const png = Buffer.from('iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAwMCAO+jRZkAAAAASUVORK5CYII=', 'base64')
+    const image = (caption: string, key: string) => `![${caption}](data:image/png;base64,${Buffer.concat([png, Buffer.from(key)]).toString('base64')})`
+    const imported = await core.documents.importFile(Buffer.from([
+      '# 检索流程', '层级检索先确定章节，再定位段落。图1解释这个流程。',
+      image('层级检索流程示意图', 'relevant'), image('同一检索流程图副本', 'relevant'),
+      image('页眉装饰', 'decoration'), image('检索方向图形碎片', 'tiny'),
+      ...Array.from({ length: 7 }, (_, i) => `历史沿革的附加背景段落${i}。`),
+      image('历史沿革时间轴', 'unrelated'),
+    ].join('\n\n')), { originalName: '检索配图.md' })
+    const id = imported.document.id
+    const blocks = core.documents.blocks(id).map(block => block.type === 'image' ? { ...block, payload: { ...block.payload, width: block.text.includes('碎片') ? 30 : 640, height: 400 } } : block)
+    const source = blocks.find(block => block.type === 'paragraph')!
+    const findImage = (caption: string) => blocks.find(block => block.type === 'image' && block.text === caption)!
+    const relevant = findImage('层级检索流程示意图')
+    const duplicate = findImage('同一检索流程图副本')
+    const unrelated = findImage('历史沿革时间轴')
+    let strategy: 'select' | 'empty' | 'fail' = 'select'
+    let candidateIds: string[] = []
+    const service = createLearningArticleService({
+      db, getDocument: core.documents.get, getTree: core.documents.tree, getBlocks: () => blocks,
+      getActiveProvider: () => ({ id: 'mock', name: 'mock', providerKind: 'ollama', protocol: 'ollama-chat', baseUrl: 'http://127.0.0.1', model: 'mock', timeoutMs: 1000, supportsStreaming: false, supportsVision: false, hasApiKey: false, active: true, createdAt: '', updatedAt: '' }),
+      complete: async request => {
+        const user = request.messages[1].content as string
+        if (user.startsWith('文章配图候选：')) {
+          const input = JSON.parse(user.slice('文章配图候选：'.length))
+          candidateIds = input.images.map((item: { id: string }) => item.id)
+          if (strategy === 'fail') throw new Error('optional image selection failed')
+          const reason = '此图解释本段先定位章节再寻找段落的检索过程'
+          return JSON.stringify({ figures: strategy === 'empty' ? [] : [
+            { imageBlockId: unrelated.id, paragraphIndex: 0, reason },
+            { imageBlockId: 'invented', paragraphIndex: 0, reason },
+            { imageBlockId: relevant.id, paragraphIndex: 999, reason },
+            { imageBlockId: relevant.id, paragraphIndex: 0, reason },
+            { imageBlockId: duplicate.id, paragraphIndex: 1, reason },
+          ] })
+        }
+        const sources = JSON.parse(user.slice(user.indexOf('[{"id"'))) as Array<{ id: string }>
+        const refs = sources.some(item => item.id === source.id) ? [source.id] : sources.map(item => item.id)
+        return JSON.stringify({ paragraphs: [
+          { text: '先定位章节，再检索其中的具体段落。', sourceBlockIds: refs },
+          { text: '返回引用可以检查回答是否符合原意。', sourceBlockIds: refs },
+        ] })
+      },
+    })
+    const selected = await service.generate(id)
+    assert.equal(selected.status, 'ready', selected.errorMessage)
+    const flatten = (sections: typeof selected.sections): typeof selected.sections => sections.flatMap(section => [section, ...flatten(section.children)])
+    const body = flatten(selected.sections).find(section => section.title === '检索流程')!
+    assert.deepEqual(body.figures.map(figure => figure.blockId), [relevant.id])
+    assert.equal(body.figures[0].afterParagraphId, body.paragraphs[0].id)
+    const rendered = articleContentBlocks(selected)
+    assert.equal(rendered[rendered.findIndex(block => block.id === body.paragraphs[0].id) + 1].id, body.figures[0].id)
+    assert.ok(candidateIds.includes(unrelated.id), 'unrelated candidate must fail the paragraph-source check')
+    assert.ok(!candidateIds.includes(findImage('页眉装饰').id))
+    assert.ok(!candidateIds.includes(findImage('检索方向图形碎片').id))
+    for (const next of ['empty', 'fail'] as const) {
+      strategy = next
+      const result = await service.generate(id, { force: true })
+      assert.equal(result.status, 'ready', result.errorMessage)
+      assert.ok(flatten(result.sections).find(section => section.title === '检索流程')!.paragraphs.length)
+      assert.ok(flatten(result.sections).every(section => !section.figures.length))
+    }
+  } finally {
+    db.close(); await core.storage.close(); await rm(dir, { recursive: true, force: true })
+  }
+})
 
 test('learning articles retain hierarchy and real references across database connections', async () => {
   const dir = await mkdtemp(join(tmpdir(), 'decklens-article-'))
@@ -36,8 +109,7 @@ test('learning articles retain hierarchy and real references across database con
     const first = findSection(result.sections, '第一章')!
     assert.ok(first)
     assert.equal(first.children[0].title, '第二节')
-    assert.equal(first.children[0].figures.length, 1)
-    assert.equal(core.documents.block(first.children[0].figures[0].blockId).type, 'image')
+    assert.equal(first.children[0].figures.length, 0, 'uncaptioned illustrations are not inserted automatically')
     const blockIds = new Set(core.documents.blocks(id, { limit: 500 }).map(block => block.id))
     for (const section of [result.sections[0], first, first.children[0]]) {
       for (const paragraph of section.paragraphs) assert.ok(paragraph.sources.every(source => blockIds.has(source.blockId)))
@@ -89,8 +161,7 @@ test('slide-like pages become a thematic article with traceable images and compl
     assert.equal(result.sections[1].title, '概念与应用')
     assert.equal(result.sections[1].kind, 'body')
     assert.ok(new Set(result.sections[1].paragraphs.flatMap(p => p.sources.map(s => s.locator.pageNumber))).size >= 2)
-    assert.equal(result.sections[1].figures.length, 1)
-    assert.equal(core.documents.block(result.sections[1].figures[0].blockId).type, 'image')
+    assert.equal(result.sections[1].figures.length, 0, 'page membership alone is not evidence of image relevance')
     invalidPlan = true
     const failed = await service.generate(id, { force: true })
     assert.equal(failed.status, 'failed')

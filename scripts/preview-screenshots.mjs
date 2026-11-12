@@ -2,7 +2,10 @@
 import { mkdtemp } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
+import { createServer } from 'node:http';
 import { createCore } from '../packages/core/dist/index.js';
+import { openDatabase } from '../packages/core/dist/database.js';
+import { createLearningArticleService } from '../packages/core/dist/learning-articles.js';
 import { startServer } from '../apps/server/dist/index.js';
 
 const dataDir = await mkdtemp(join(tmpdir(), 'decklens-screenshots-'));
@@ -49,6 +52,23 @@ const retrieval = blocks.find(block => block.text.startsWith('层级检索（'))
 const reference = blocks.find(block => block.text.startsWith('原文引用把'));
 const branch = blocks.find(block => block.text.startsWith('分支探索是'));
 if (!retrieval || !reference || !branch) throw new Error('Screenshot source blocks were not parsed.');
+// Author article fixtures through the same persistence/validation path, without any model request.
+const db = openDatabase(dataDir);
+const fixtureProvider = { id: 'fixture', name: 'fixture', providerKind: 'ollama', protocol: 'ollama-chat', baseUrl: 'http://127.0.0.1', model: 'fixture', timeoutMs: 1000, supportsStreaming: false, supportsVision: false, hasApiKey: false, active: true, createdAt: '', updatedAt: '' };
+const articleService = createLearningArticleService({
+  db, getDocument: core.documents.get, getTree: core.documents.tree, getBlocks: id => core.documents.blocks(id),
+  getActiveProvider: () => fixtureProvider,
+  complete: async request => {
+    const user = request.messages[1].content;
+    const sources = JSON.parse(user.slice(user.indexOf('[{"id"')));
+    if (sources[0]?.type === 'article-draft') return JSON.stringify({ paragraphs: [{ text: '先理解章节中的概念，再围绕问题展开追问，最后回到原文复核。这条阅读路径把知识结构、对话思路和可检查的出处连在一起。', sourceBlockIds: sources.slice(0, 3).map(item => item.id) }] });
+    const paragraphs = sources.filter(item => item.type !== 'heading').map(item => ({ text: item.text, sourceBlockIds: [item.id] }));
+    return JSON.stringify({ paragraphs: paragraphs.length ? paragraphs : sources.map(item => ({ text: item.text, sourceBlockIds: [item.id] })) });
+  },
+});
+const article = await articleService.generate(document.id);
+if (article.status !== 'ready') throw new Error(article.errorMessage);
+db.close();
 const chat = core.chat.create(document.id, '阅读路径 · 预置展示');
 const first = core.exploration.createNode({
   documentId: document.id, chatId: chat.id, kind: 'qa',
@@ -72,12 +92,24 @@ core.exploration.createNode({
   anchor: { blockId: reference.id }, citations: [{ blockId: reference.id, quote: reference.text }],
   context: { origin: 'local', screenshotFixture: true },
 });
+// Optional local response stub for exercising lasso/chat controls. It never leaves loopback.
+let responseStub;
+if (process.argv.includes('--test-model')) {
+  responseStub = createServer(async (req, res) => {
+    for await (const _ of req) { /* Consume the local fixture request. */ }
+    res.setHeader('content-type', 'application/json');
+    res.end(JSON.stringify({ message: { content: '先按章节确定上下文，再定位具体段落。点击原文引用可以核对出处；也可以从当前回答继续深入或另开分支。[1]' } }));
+  });
+  await new Promise(resolve => responseStub.listen(0, '127.0.0.1', resolve));
+  core.providers.save({ name: '本地交互测试', providerKind: 'ollama', protocol: 'ollama-chat', baseUrl: `http://127.0.0.1:${responseStub.address().port}`, model: 'local-fixture', timeoutMs: 3000, supportsStreaming: false, supportsVision: true, activate: true });
+}
 const instance = await startServer({ dataDir, core, port: 0 });
 console.log(`Screenshot preview: http://127.0.0.1:${instance.port}`);
 console.log(`Isolated temporary data: ${dataDir}`);
-console.log('No model is configured. Document and conversations are authored presentation fixtures.');
+console.log('Document, article and conversations are authored presentation fixtures. No external model is called.');
 async function stop() {
   await new Promise(resolve => instance.server.close(resolve));
+  if (responseStub) await new Promise(resolve => responseStub.close(resolve));
   await core.storage.close();
 }
 process.once('SIGINT', () => void stop());

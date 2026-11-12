@@ -30,11 +30,16 @@ export type AnnotationRecord = {
   tool: 'pen' | 'highlighter' | 'lasso'
   targets: AnnotationTarget[]
   createdAt: string
+  surface?: 'source' | 'article'
+  articleRevision?: string
 }
+export type AnnotationScope = { surface?: 'source' | 'article'; articleRevision?: string }
 export type CreateAnnotationInput = {
   documentId: string
   tool: AnnotationRecord['tool']
   targets: AnnotationTarget[]
+  surface?: 'source' | 'article'
+  articleRevision?: string
 }
 
 export type DocumentSummary = {
@@ -176,7 +181,6 @@ export type ModelChatRequest = {
 }
 
 export type ReaderViewState = {
-  conversationMode?: 'chat' | 'branch'
   documentId?: string
   chatId?: string
   activeNodeId?: string
@@ -249,10 +253,10 @@ export interface PlatformAdapter {
   getAssetUrl(assetId: string): string
   updateSections(id: string, edits: Array<Record<string, unknown>>): Promise<unknown>
   getTerms(id: string): Promise<Term[]>
-  listAnnotations(id: string): Promise<AnnotationRecord[]>
+  listAnnotations(id: string, scope?: AnnotationScope): Promise<AnnotationRecord[]>
   createAnnotation(input: CreateAnnotationInput): Promise<AnnotationRecord>
   deleteAnnotation(id: string): Promise<void>
-  clearAnnotations(documentId: string): Promise<void>
+  clearAnnotations(documentId: string, scope?: AnnotationScope): Promise<void>
   getTerm(id: string): Promise<Term>
   explainTerm(id: string): Promise<Term>
   getGraph(id: string, chatId?: string): Promise<ExploreGraph>

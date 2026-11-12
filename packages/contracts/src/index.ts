@@ -40,11 +40,16 @@ export interface AnnotationRecord {
   tool: AnnotationTool;
   targets: AnnotationTarget[];
   createdAt: string;
+  surface?: "source" | "article";
+  articleRevision?: string;
 }
+export interface AnnotationScope { surface?: "source" | "article"; articleRevision?: string }
 export interface CreateAnnotationInput {
   documentId: string;
   tool: AnnotationTool;
   targets: AnnotationTarget[];
+  surface?: "source" | "article";
+  articleRevision?: string;
 }
 
 export interface DocumentRecord {
@@ -139,6 +144,7 @@ export interface DocumentTree {
 /** A locally persisted, source-grounded learning article generated from a document version. */
 export interface LearningArticle {
   id: string;
+  revision: string;
   documentId: string;
   documentVersionId: string;
   title: string;
@@ -338,6 +344,7 @@ export interface AskRequest {
   chatId?: string;
   question: string;
   selectedText?: string;
+  articleSelection?: { revision: string; targetIds: string[]; annotationId?: string };
   anchor?: { blockId: string; startOffset?: number; endOffset?: number };
   images?: Array<{ blockId: string; assetId: string }>;
   context?: Record<string, unknown>;

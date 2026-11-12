@@ -4,15 +4,18 @@
 
 - Added persisted folders and nested folders, with document moves that survive reparsing and restarts.
 - Replaced the file-folder native prompt with an in-page form that works in embedded browsers. The move menu can create a folder and move the file into it, with validation, visible errors, and retry after a failed move.
-- Added ordinary and branching conversation views, chat history, selectable conversation paths, contextual follow-ups, and source links in the right panel.
+- Unified continuous and branching conversations in one right-panel view, with chat history, selectable paths, contextual follow-ups, and source links. Removed the conversation mode switch and question placeholder.
 - Added locally saved Chinese learning articles with progress, thematic grouping for PDF/PPTX pages, translated headings, original image references, and citation validation. Generation is user initiated and sends extracted text to the configured model; it is separate from local native parsing.
 - Added adjustable reading text size, a neutral reader palette, and a composer menu for import and annotation tools.
 - Updated migration regression tests for the article and folder schema, with safe database cleanup on failed assertions.
 - Moved the document question composer to the bottom of the right exploration panel, including its narrow-screen drawer. Removed the disabled placeholder from the reading area.
 - Connected document questions to the existing exploration API with loading feedback, model setup, source citations, and retryable errors that preserve the question.
 - Replaced the outdated README images with current desktop, branching conversation, narrow-screen reading, and conversation drawer screenshots. Added an isolated local preview script with authored presentation fixtures; no private documents, model calls, or API keys are used.
+- Added pen, highlighter, eraser and lasso interactions to learning articles through the existing annotation layer. Article marks persist separately from source marks and bind to an article revision; lasso questions validate article targets on the server and link back to both article selections and original sources.
+- Replaced automatic copying of all source images with optional paragraph-specific figure selection. Decorative, tiny and repeated images are filtered; selected figures require nearby source evidence, are deduplicated, and follow their matching paragraph. Image selection failure preserves article text.
+- Added regression coverage for article mark persistence, revision isolation, verified lasso context, and conservative figure selection; refreshed screenshots for the unified conversation and article annotation interface.
 
-Learning articles remain AI generated and require checking against their citations. Interrupted generation does not resume automatically. This update does not package Electron.
+Learning articles remain AI generated and require checking against their citations. Regenerate older articles manually to apply the new figure rules. Figures without reliable captions or nearby text may be omitted; fragmented slide graphics are not reconstructed. Article marks are not automatically migrated after regeneration. Interrupted generation does not resume automatically. This update does not package Electron.
 
 ## v0.2.0 - 2026-11-12
 

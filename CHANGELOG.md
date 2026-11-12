@@ -10,8 +10,9 @@
 - Updated migration regression tests for the article and folder schema, with safe database cleanup on failed assertions.
 - Moved the document question composer to the bottom of the right exploration panel, including its narrow-screen drawer. Removed the disabled placeholder from the reading area.
 - Connected document questions to the existing exploration API with loading feedback, model setup, source citations, and retryable errors that preserve the question.
+- Replaced the outdated README images with current desktop, branching conversation, narrow-screen reading, and conversation drawer screenshots. Added an isolated local preview script with authored presentation fixtures; no private documents, model calls, or API keys are used.
 
-Learning articles remain AI generated and require checking against their citations. Interrupted generation does not resume automatically. The existing README screenshots show the earlier base layout rather than the new conversation interface. This update does not package Electron.
+Learning articles remain AI generated and require checking against their citations. Interrupted generation does not resume automatically. This update does not package Electron.
 
 ## v0.2.0 - 2026-11-12
 

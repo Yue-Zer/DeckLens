@@ -22,11 +22,22 @@ DeckLens 是本地优先的交互式学习阅读器，把学习资料解析为�
 - **中栏：**结构化正文和来源标注；画笔与套索工具覆盖在正文上方。
 - **右栏：**普通对话、分支对话、历史路径、引用和后续提问；可折叠。
 
-较窄视口下目录和对话面板改为抽屉。以下截图来自合成文档，记录基础阅读布局；当前版本的右侧对话界面和工具入口已有调整：
+较窄视口下目录和对话面板改为抽屉。以下为当前 Web 版的实机截图，展示文件夹、阅读模式、普通/分支对话，以及右侧底部的问答入口。截图使用独立的演示文档和人工预置对话，未调用模型，不包含私人测试资料或 API Key。更新方式见 [截图说明](docs/screenshots/README.md)。
 
-![DeckLens 桌面三栏阅读界面](docs/screenshots/browser-reading.jpg)
+桌面阅读：左侧整理文件，中间查看原文，右侧对话并核对引用。
 
-![DeckLens 窄屏阅读界面](docs/screenshots/browser-mobile.jpg)
+![DeckLens 当前桌面三栏界面，包含本地文件夹、原文阅读和右侧底部问答框](docs/screenshots/web-reader-desktop.jpg)
+
+分支对话：保留追问路径，可折叠回答，并从原文引用继续核对。
+
+![DeckLens 分支对话界面，包含当前路径、回答折叠、深入与关联操作](docs/screenshots/web-reader-branches.jpg)
+
+375px 窄屏：正文阅读和右侧对话抽屉分别展示，问答入口位于对话抽屉底部。
+
+<p>
+  <img src="docs/screenshots/web-reader-mobile.jpg" alt="DeckLens 375px 窄屏原文阅读界面" width="300" />
+  <img src="docs/screenshots/web-reader-mobile-chat.jpg" alt="DeckLens 375px 窄屏对话抽屉，问答框位于底部" width="300" />
+</p>
 
 ## 支持的格式
 

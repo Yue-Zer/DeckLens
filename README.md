@@ -42,6 +42,22 @@ DeckLens 是本地优先的交互式学习阅读器，把学习资料解析为�
 
 需要 Node.js 22.13 或更高版本、npm 10 或更高版本。
 
+先进入项目根目录（包含 `package.json` 的文件夹），将下面的示例路径替换为实际路径。Windows 下的命令取决于终端类型：
+
+CMD（命令提示符）跨磁盘切换目录时必须加 `/d`，只执行 `cd` 不会切换当前磁盘；路径有空格时需保留双引号：
+
+```cmd
+cd /d "D:\Projects\DeckLens"
+```
+
+PowerShell 会自动切换磁盘，直接使用：
+
+```powershell
+cd "D:\Projects\DeckLens"
+```
+
+进入项目目录后安装依赖并启动（CMD、PowerShell 均可）：
+
 ```powershell
 npm ci
 npm run dev

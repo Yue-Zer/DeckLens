@@ -1,5 +1,10 @@
 # Changelog
 
+## Unreleased
+
+- Moved the document question composer to the bottom of the right exploration panel, including its narrow-screen drawer. Removed the disabled placeholder from the reading area.
+- Connected document questions to the existing exploration API with loading feedback, model setup, source citations, and retryable errors that preserve the question.
+
 ## v0.2.0 - 2026-11-12
 
 Native PDF and DOCX parsing for the local Web reader.

@@ -71,7 +71,7 @@ function sourceElement(node: ExploreNode): HTMLElement | null {
 function rootRect() {
   const root = props.path[0]
   const element = root && sourceElement(root)
-  return element?.getBoundingClientRect() ?? document.querySelector('.bottom-ask')?.getBoundingClientRect() ?? new DOMRect(window.innerWidth / 2, 160, 0, 0)
+  return element?.getBoundingClientRect() ?? document.querySelector('.explore-composer')?.getBoundingClientRect() ?? new DOMRect(window.innerWidth / 2, 160, 0, 0)
 }
 function setCard(node: ExploreNode, value: unknown) {
   const key = id(node)

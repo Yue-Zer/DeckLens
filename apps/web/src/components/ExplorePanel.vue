@@ -164,7 +164,7 @@ watch(active, node => { if (node?.kind === 'note') syncNote(node) }, { immediate
       <div class="explore-tree-title"><strong>探索树</strong><span>{{ nodes.length }}</span></div>
       <div v-if="loading" class="explore-state"><span class="loading-rule"></span><span>正在恢复探索路径…</span></div>
       <div v-else-if="error" class="explore-state error" role="alert">{{ error }}</div>
-      <div v-else-if="!nodes.length" class="explore-state"><strong>从正文建立第一条路径</strong><span>点击术语可展开解释；也可以先创建一条本地笔记。</span><button class="text-button" @click="emit('createNote')">新建笔记</button></div>
+      <div v-else-if="!nodes.length" class="explore-state"><strong>从文档建立第一条路径</strong><span>在下方提问，或点击正文术语展开解释；也可以创建本地笔记。</span><button class="text-button" @click="emit('createNote')">新建笔记</button></div>
       <ul v-else class="explore-tree" aria-label="探索节点列表">
         <li v-for="row in rows" :key="id(row.node)" class="explore-tree-row" :style="{ '--depth': row.depth }">
           <button v-if="row.hasChildren" class="tree-toggle" :aria-label="expanded.has(id(row.node)) ? '收起子节点' : '展开子节点'" @click="emit('toggle', id(row.node))">
@@ -208,5 +208,6 @@ watch(active, node => { if (node?.kind === 'note') syncNote(node) }, { immediate
       <footer v-else class="node-card-footer note-footer"><button class="secondary-button" @click="emit('createNote', id(active))">在此分支添加笔记</button><div v-if="!aiAvailable" class="model-required"><span>AI 深挖、关联和分叉需要先配置模型。</span><button @click="emit('configure')"><Settings2 :size="14" />配置模型</button></div><div v-else class="node-actions"><button :disabled="busy" @click="submitQuestion('deepens', `围绕「${active.title}」深入解释，并引用文档。`)"><Sparkles :size="14" />深挖</button><button :disabled="busy" @click="submitQuestion('related')"><Layers3 :size="14" />关联</button><button :disabled="busy" @click="submitQuestion('branch')"><GitBranch :size="14" />分叉</button></div></footer>
     </article>
     <div v-else-if="!loading && !error && nodes.length" class="explore-card-placeholder"><Layers3 :size="20" /><strong>选择一个节点</strong><span>探索卡片和引用会显示在这里。</span></div>
+    <slot name="composer" />
   </section>
 </template>

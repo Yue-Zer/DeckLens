@@ -25,6 +25,8 @@ const expandedExploreNodes = ref(new Set<string>())
 const exploreLoading = ref(false)
 const exploreBusy = ref(false)
 const exploreError = ref('')
+const documentQuestion = ref('')
+const documentQuestionError = ref('')
 const aiAvailable = ref(false)
 const visionAvailable = ref(false)
 const selectedAnchor = ref<{ termId: string; blockId: string; startOffset: number; endOffset: number; text: string } | null>(null)
@@ -438,8 +440,10 @@ async function loadExploration(documentId: string, requestId: number, preferredC
 async function refreshExplore(preferredNodeId?: string) {
   const documentId = activeDocumentId.value
   const chatId = exploreChatId.value
+  const requestId = viewRequest
   if (!documentId || !chatId) return
   const graph = await api.getGraph(documentId, chatId)
+  if (disposed || requestId !== viewRequest || chatId !== exploreChatId.value) return
   exploreNodes.value = graph.nodes
   exploreEdges.value = graph.edges
   const ids = new Set(graph.nodes.map(node => node.nodeId || node.id))
@@ -531,6 +535,29 @@ async function exploreFromCard(nodeId: string, question: string, kind: 'deepens'
     await refreshExplore(result.node.nodeId || result.node.id)
   } catch (error) { exploreError.value = errorMessage(error); notify(errorMessage(error)) }
   finally { exploreBusy.value = false }
+}
+async function askDocument() {
+  if (exploreBusy.value || readerLoading.value || exploreLoading.value || !activeDocument.value || !exploreChatId.value) return
+  if (!aiAvailable.value) { providerSettingsOpen.value = true; return }
+  const question = documentQuestion.value.trim()
+  if (!question) return
+  const documentId = activeDocumentId.value
+  const chatId = exploreChatId.value
+  const requestId = viewRequest
+  const draft = documentQuestion.value
+  exploreBusy.value = true
+  documentQuestionError.value = ''
+  try {
+    const result = await api.ask({ documentId, chatId, question })
+    if (disposed || requestId !== viewRequest) return
+    if (!result.node) throw new Error('模型没有创建探索节点，请重试。')
+    await refreshExplore(result.node.nodeId || result.node.id)
+    if (requestId === viewRequest && documentQuestion.value === draft) documentQuestion.value = ''
+  } catch (error) {
+    if (requestId === viewRequest) documentQuestionError.value = errorMessage(error)
+  } finally {
+    if (requestId === viewRequest) exploreBusy.value = false
+  }
 }
 async function saveManualNote(nodeId: string, title: string, answer: string) {
   try { await api.updateNode(nodeId, { title, answer }); await refreshExplore(nodeId) }
@@ -667,6 +694,9 @@ async function openDocument(documentId: string) {
     void saveExploreViewNow()
   }
   const requestId = ++viewRequest
+  documentQuestion.value = ''
+  documentQuestionError.value = ''
+  exploreBusy.value = false
   activeDocumentId.value = documentId
   exploreChatId.value = ''
   readerLoading.value = true
@@ -966,12 +996,23 @@ onUnmounted(() => {
               @error="notify"
             />
           </article>
-          <div class="bottom-ask" aria-label="提问入口"><span>AI 阅读助手</span><input disabled aria-label="提问入口" placeholder="AI 问答将在下一阶段接入" /><button disabled>提问</button></div>
         </div>
       </main>
 
       <aside class="explore-column" :class="{ 'drawer-open': rightDrawerOpen }" aria-label="探索路径">
-        <ExplorePanel :nodes="exploreNodes" :edges="exploreEdges" :terms="terms" :active-node-id="activeExploreNodeId" :expanded-node-ids="[...expandedExploreNodes]" :busy="exploreBusy" :ai-available="aiAvailable" :loading="exploreLoading" :error="exploreError" @activate="activateExploreNode" @toggle="toggleExploreNode" @delete-branch="deleteExploreBranch" @create-note="createManualNote" @ask="exploreFromCard" @save-note="saveManualNote" @cite="jumpToSource" @configure="providerSettingsOpen = true" @close="rightDrawerOpen = false" @term="openTermFromCard" />
+        <ExplorePanel :nodes="exploreNodes" :edges="exploreEdges" :terms="terms" :active-node-id="activeExploreNodeId" :expanded-node-ids="[...expandedExploreNodes]" :busy="exploreBusy" :ai-available="aiAvailable" :loading="exploreLoading" :error="exploreError" @activate="activateExploreNode" @toggle="toggleExploreNode" @delete-branch="deleteExploreBranch" @create-note="createManualNote" @ask="exploreFromCard" @save-note="saveManualNote" @cite="jumpToSource" @configure="providerSettingsOpen = true" @close="rightDrawerOpen = false" @term="openTermFromCard">
+          <template #composer>
+            <form class="explore-composer" aria-label="文档问答" :aria-busy="exploreBusy" @submit.prevent="askDocument">
+              <label for="document-question">向文档提问</label>
+              <div class="explore-composer-input">
+                <input id="document-question" v-model="documentQuestion" :disabled="!activeDocument || !exploreChatId || readerLoading || exploreLoading || exploreBusy" :aria-describedby="documentQuestionError ? 'document-question-help document-question-error' : 'document-question-help'" :aria-invalid="Boolean(documentQuestionError)" :placeholder="activeDocument ? '输入文档问题…' : '请先打开一份文档'" @input="documentQuestionError = ''" @keydown.enter="($event.isComposing || $event.keyCode === 229) && $event.preventDefault()" />
+                <button type="submit" :disabled="!activeDocument || !exploreChatId || readerLoading || exploreLoading || exploreBusy || (aiAvailable && !documentQuestion.trim())">{{ exploreBusy ? '生成中' : aiAvailable ? '提问' : '配置模型' }}</button>
+              </div>
+              <p id="document-question-help" role="status">{{ exploreBusy ? '正在生成回答…' : !activeDocument ? '打开文档后，可在这里提问。' : !aiAvailable ? '配置模型后即可提问。' : '基于当前文档回答，引用可跳回原文。' }}</p>
+              <p v-if="documentQuestionError" id="document-question-error" class="explore-composer-error" role="alert">{{ documentQuestionError }}</p>
+            </form>
+          </template>
+        </ExplorePanel>
       </aside>
     </div>
 
